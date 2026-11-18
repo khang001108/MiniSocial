@@ -1,0 +1,1 @@
+package javax.microedition.io; public interface HttpConnection extends InputConnection {String GET="GET",POST="POST";void setRequestMethod(String s) throws java.io.IOException;void setRequestProperty(String k,String v)throws java.io.IOException;java.io.OutputStream openOutputStream()throws java.io.IOException;int getResponseCode()throws java.io.IOException;}

@@ -1,0 +1,15 @@
+# Add this block to your EXISTING /etc/caddy/Caddyfile. Keep Gunny's block unchanged.
+# Domain minisocial.xubi.org must point to the same public IPv4 as Gunny/Xubi.
+minisocial.xubi.org {
+    encode gzip
+
+    # Nokia may download the JAD and then its relative JAR from this path.
+    handle_path /download/* {
+        root * /opt/minisocial/client/dist
+        file_server
+    }
+
+    handle {
+        reverse_proxy 127.0.0.1:8087
+    }
+}

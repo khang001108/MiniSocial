@@ -1,0 +1,23 @@
+services:
+  minisocial:
+    build:
+      context: ../server
+    image: minisocial-server:1.1.0
+    container_name: minisocial
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:8087:8080"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m
+    mem_limit: 384m
+    cpus: 1.5
+    healthcheck:
+      test: ["CMD", "java", "-cp", "/app/classes", "minisocial.HealthCheck"]
+      interval: 60s
+      timeout: 5s
+      retries: 2
