@@ -1,15 +1,9 @@
-# Add this block to your EXISTING /etc/caddy/Caddyfile. Keep Gunny's block unchanged.
-# Domain minisocial.xubi.org must point to the same public IPv4 as Gunny/Xubi.
+# Gộp block này vào Caddyfile hiện tại. KHÔNG xóa cấu hình Gunny.
+# DNS minisocial.xubi.org phải trỏ về IPv4 Public của Pi/router; NAT 443 -> Pi.
+# Nếu Tailscale Serve đang dùng 443 trên tailscale0, cấu hình bind IP LAN
+# phù hợp theo giao diện Xubi Network / NAT trước khi bật Caddy.
 minisocial.xubi.org {
     encode gzip
-
-    # Nokia may download the JAD and then its relative JAR from this path.
-    handle_path /download/* {
-        root * /opt/minisocial/client/dist
-        file_server
-    }
-
-    handle {
-        reverse_proxy 127.0.0.1:8087
-    }
+    # Backend MiniSocial phục vụ cả trang tải, JAR/JAD và API trên cùng cổng.
+    reverse_proxy 127.0.0.1:18087
 }

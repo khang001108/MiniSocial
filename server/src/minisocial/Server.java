@@ -3,6 +3,7 @@ package minisocial;
 import com.sun.net.httpserver.*;
 import java.io.*;
 import java.net.*;
+import java.nio.file.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.*;
@@ -25,6 +26,9 @@ public final class Server {
     try{
       String path=x.getRequestURI().getPath();
       if(path.equals("/health")){send(x,200,"{\"ok\":true,\"service\":\"MiniSocial\"}","application/json; charset=UTF-8");return;}
+      if(path.equals("/")||path.equals("/index.html")){serveStatic(x,"index.html",true);return;}
+      if(path.equals("/download/MiniSocial-Responsive.jar")){serveStatic(x,"MiniSocial-Responsive.jar",false);return;}
+      if(path.equals("/download/MiniSocial-Responsive.jad")){serveStatic(x,"MiniSocial-Responsive.jad",false);return;}
       if(!path.startsWith("/m/"))throw new Fault(404,"Not found");
       boolean post=x.getRequestMethod().equals("POST");boolean get=x.getRequestMethod().equals("GET");
       if(!post&&!get)throw new Fault(405,"Method not allowed");
@@ -55,6 +59,33 @@ public final class Server {
      catch(Supabase.Error e){int status=e.status==401?401:(e.status>=400&&e.status<500?400:502);send(x,status,"ERR|"+enc(e.getMessage()),"text/plain; charset=UTF-8");}
      catch(Exception e){System.err.println("Request failed: "+e.getClass().getSimpleName());send(x,500,"ERR|Server+error","text/plain; charset=UTF-8");}
      finally{x.close();}
+  }
+  /** Serve only explicitly allowlisted download paths; never expose project files or secrets. */
+  private static void serveStatic(HttpExchange x,String file,boolean page)throws IOException{
+    String method=x.getRequestMethod();
+    if(!method.equals("GET")&&!method.equals("HEAD"))throw new Fault(405,"GET or HEAD required");
+    String root=System.getenv().getOrDefault(page?"MINISOCIAL_WEB_DIR":"MINISOCIAL_DOWNLOAD_DIR",page?"/app/web":"/app/download");
+    Path src=Path.of(root,file);
+    if(!Files.isRegularFile(src))throw new Fault(404,"File not found");
+    byte[] content=Files.readAllBytes(src);
+    Headers h=x.getResponseHeaders();
+    String mime=page?"text/html; charset=UTF-8":file.endsWith(".jad")?"text/vnd.sun.j2me.app-descriptor; charset=UTF-8":"application/java-archive";
+    h.set("Content-Type",mime);
+    h.set("X-Content-Type-Options","nosniff");
+    h.set("Cache-Control",page?"no-cache":"public, max-age=3600");
+    if(page){
+      h.set("Content-Security-Policy","default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+      h.set("X-Frame-Options","DENY");
+    }else{
+      h.set("Content-Disposition","attachment; filename=\""+file+"\"");
+    }
+    if(method.equals("HEAD")){
+      h.set("Content-Length",Integer.toString(content.length));
+      x.sendResponseHeaders(200,-1);
+      return;
+    }
+    x.sendResponseHeaders(200,content.length);
+    try(OutputStream os=x.getResponseBody()){os.write(content);}
   }
   private static void require(boolean valid){if(!valid)throw new Fault(405,"Wrong HTTP method");}
   private String authenticated(HttpExchange x){

@@ -1,0 +1,9 @@
+.git
+**/.git
+**/.env
+**/.env.*
+!**/.env.example
+**/build
+**/.cache
+**/__pycache__
+*.log

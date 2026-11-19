@@ -7,6 +7,9 @@ FROM eclipse-temurin:17-jre-jammy
 WORKDIR /app
 RUN useradd -u 10001 -r -s /usr/sbin/nologin minisocial
 COPY --from=build /build/classes /app/classes
+COPY web/index.html /app/web/index.html
+COPY client/dist/MiniSocial-Responsive.jar /app/download/MiniSocial-Responsive.jar
+COPY client/dist/MiniSocial-Responsive.jad /app/download/MiniSocial-Responsive.jad
 USER minisocial
 ENV PORT=8080
 EXPOSE 8080

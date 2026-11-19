@@ -132,3 +132,16 @@ After updating the domain, change `MiniSocial-Api-Url` in both the generated JAR
 ## License
 
 User-created MiniSocial prototype source code provided for modification. All visual source screenshots are reference material supplied by the user; the JAR uses shapes/fonts drawn by code and does not bundle those images.
+
+## Website tải ứng dụng qua Xubi (bổ sung)
+
+Sau khi triển khai qua Xubi, backend Java phục vụ trang tải JAR/JAD trên **cùng cổng với API**:
+
+- `http://192.168.1.127:18087/` — trang tải MiniSocial (địa chỉ chỉ là ví dụ cho Pi LAN)
+- `http://192.168.1.127:18087/download/MiniSocial-Responsive.jar` — file JAR
+- `http://192.168.1.127:18087/download/MiniSocial-Responsive.jad` — file JAD
+- `http://192.168.1.127:18087/health` — kiểm tra HTTP backend
+
+Dockerfile `server/Dockerfile` copy `web/index.html` và `client/dist` vào image. Xubi giữ `server/Dockerfile`, Host `18087` → Container `8080`/TCP, không cần mở thêm cổng NAT. Đẩy source mới lên GitHub rồi Deploy lại từ Xubi. **Không đổi cấu hình Gunny.**
+
+Để có website tải ngoài Internet an toàn: Caddy route `minisocial.xubi.org` đến `127.0.0.1:18087` và DNS trỏ về WAN IPv4 hiện tại. Nếu dùng Docker publish trên mọi interface (`0.0.0.0:18087`) thì chỉ mở NAT 443; không cần mở NAT 18087 khi Caddy reverse proxy. Cần bảo vệ quyền truy cập backend production. JAR hiện có API hard-coded `https://minisocial.xubi.org` trong manifest/JAD; trang tải trong LAN **không tự thay đổi URL API**.
