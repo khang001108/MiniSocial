@@ -1,7 +1,7 @@
 # Multi-architecture image: works on Raspberry Pi 5 (linux/arm64) and PCs (amd64).
 FROM eclipse-temurin:17-jdk-jammy AS build
 WORKDIR /build
-COPY src ./src
+COPY server/src ./src
 RUN mkdir -p classes && javac -encoding UTF-8 -d classes src/minisocial/*.java
 FROM eclipse-temurin:17-jre-jammy
 WORKDIR /app
