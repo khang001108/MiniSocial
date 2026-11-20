@@ -29,7 +29,8 @@ public final class ServerSelectionSmoke {
     Object screen=get(app,"screen");
     expect(number(app,"tab")==0,"welcome tab");
     press(screen,-102);expect(number(app,"welcomeSelection")==1,"down moves welcome selection");
-    press(screen,-102);expect(number(app,"welcomeSelection")==2,"second down moves to servers");
+    press(screen,-102);expect(number(app,"welcomeSelection")==2,"second down moves to login button");
+    press(screen,-102);expect(number(app,"welcomeSelection")==3,"third down moves to servers link");
     press(screen,-105);expect(number(app,"tab")==8,"FIRE opens server chooser");
     press(screen,-102);expect(number(app,"serverSelection")==1,"down selects Wi-Fi/LAN");
     press(screen,-105);expect(number(app,"tab")==0,"FIRE applies server");

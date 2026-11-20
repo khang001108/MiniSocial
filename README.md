@@ -5,6 +5,17 @@ The interface is **code-rendered**, not a screenshot, so it can respond to the E
 
 **IMPORTANT TEST LIMITATION:** The Java ME client has been compiled, converted to CLDC 1.1 class version 45.3, and structurally checked using OpenJDK's verifier. The build includes converted CLDC `StackMap` attributes. The v1.2 layout has been exercised with a desktop-only Canvas geometry smoke test for all four target sizes (not a Java ME emulator). **It has NOT been installed on a real Nokia E72 or run against a real Supabase project.** Nokia Java ME HTTPS certificate/TLS support may require additional work. Do not claim E72 installation or end-to-end operation is already confirmed.
 
+
+## Giao diện đăng nhập mới (v1.3.0)
+
+Màn hình đầu mở thẳng vào biểu mẫu theo phong cách web: tiêu đề MiniSocial, ô **Tài khoản / Email**, ô **Mật khẩu**, nút **Đăng nhập** màu xanh lá và ba liên kết nhỏ bên dưới: **Máy chủ · Tạo tài khoản · Thông tin**.
+
+- **↑/↓** đổi vùng chọn giữa 6 phần, **OK/Enter** để sửa/chọn; phím mềm trái chọn, phím mềm phải mở Máy chủ. Có thể chạm vào ô/liên kết trên thiết bị cảm ứng.
+- Dữ liệu email/mật khẩu được nhập qua `TextBox` MIDP hệ thống; đây là cách phù hợp bàn phím Nokia, vì `Canvas` không có trường nhập HTML thật. Mật khẩu hiển thị dạng dấu `*` và không lưu vào RMS.
+- Chọn máy chủ giữ nguyên 3 chế độ Internet HTTPS, Wi-Fi LAN và tùy chỉnh. Đổi máy chủ xóa phiên đăng nhập trước và mật khẩu đang nhập.
+- Mục Thông tin có một trang riêng, có thể quay lại.
+- Bản đổi giao diện này **không thay đổi** backend Java 17 hay Supabase.
+
 ## Responsive screen support (v1.2.0)
 
 The same JAR reads `Canvas.getWidth()` and `Canvas.getHeight()` on every paint and when its size changes. It automatically lays out these four target screen sizes: **240×320 portrait, 320×240 landscape, 360×640 portrait, and 640×480 landscape**. Other screen sizes receive a best-effort flexible layout. The 240-pixel-wide portrait screen uses a 2×2 navigation grid; wider screens use a single row. Lists scroll by Up/Down using a selection-based window rather than only drawing the first items. Touch-capable MIDP devices can tap navigation and rows; keypad actions remain the primary controls.

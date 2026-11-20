@@ -15,6 +15,8 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
     private String publicHost=DEFAULT_PUBLIC,lanHost=DEFAULT_LAN,customHost="https://minisocial.xubi.org";
     private String host=DEFAULT_PUBLIC;
     private int serverMode=0,serverSelection=0,welcomeSelection=0;
+    // Login form fields are held in RAM only. Password is never written to RMS.
+    private String loginEmail="", loginPassword="";
     private int navSelection=0;
     private boolean navFocus=false;
     private String token="", me="", myName="";
@@ -96,7 +98,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         String next=serverAddress(idx);
         if(!next.equals(host)){
             // A Supabase login token from server A must never be sent to server B.
-            token="";me="";myName="";saveSession();
+            token="";me="";myName="";loginPassword="";saveSession();
             feed=new Vector();friends=new Vector();messages=new Vector();incoming=new Vector();
         }
         serverMode=idx;host=next;
@@ -125,7 +127,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             }finally{if(in!=null)in.close();if(c!=null)c.close();}
         }});
     }
-    private void logout(){token="";me="";myName="";saveSession();tab=0;screen.repaint();}
+    private void logout(){token="";me="";myName="";loginPassword="";saveSession();tab=0;welcomeSelection=0;screen.repaint();}
     private interface Task{void run()throws Exception;}
     private void work(final Task t){if(busy)return;busy=true;notification="";screen.repaint();new Thread(new Runnable(){public void run(){try{t.run();}catch(Exception e){notification=e.getMessage();}finally{busy=false;screen.repaint();}}}).start();}
     private static String encode(String v){try{byte[]b=v.getBytes("UTF-8");StringBuffer s=new StringBuffer();String hex="0123456789ABCDEF";for(int i=0;i<b.length;i++){int c=b[i]&255;if(c>=65&&c<=90||c>=97&&c<=122||c>=48&&c<=57||c==45||c==95||c==46){s.append((char)c);}else if(c==32)s.append('+');else{s.append('%');s.append(hex.charAt(c>>4));s.append(hex.charAt(c&15));}}return s.toString();}catch(Exception e){return "";}}
@@ -161,10 +163,34 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         reload();
     }
     private void edit(String m,String title,int constraints){mode=m;editor=new TextBox(title,"",500,constraints);editor.addCommand(save);editor.addCommand(cancel);editor.setCommandListener(this);display.setCurrent(editor);}
-    private void auth(boolean signup){entryStep=0;entry=new String[4];edit(signup?"register":"login",signup?"Ten hien thi":"Email",TextField.ANY);}
+    private void auth(boolean signup){
+        if(!signup){editLogin(true);return;}
+        entryStep=0;entry=new String[4];edit("register","Ten hien thi",TextField.ANY);
+    }
+    private void editLogin(boolean email){
+        mode=email?"login-email":"login-password";
+        editor=new TextBox(email?"Tài khoản (Email)":"Mật khẩu",email?loginEmail:loginPassword,email?140:128,
+             email?TextField.EMAILADDR:(TextField.ANY|TextField.PASSWORD));
+        editor.addCommand(save);editor.addCommand(cancel);editor.setCommandListener(this);display.setCurrent(editor);
+    }
+    private void submitLogin(){
+        final String email=loginEmail.trim(),pass=loginPassword;
+        if(email.length()==0||email.indexOf('@')<1){notification="Nhập email tài khoản";screen.repaint();return;}
+        if(pass.length()==0){notification="Nhập mật khẩu";screen.repaint();return;}
+        // Do not keep the password after launching the login request.
+        loginPassword="";
+        work(new Task(){public void run()throws Exception{
+            String[]r=single("/m/login","email="+encode(email)+"&password="+encode(pass));
+            me=r[1];token=r[2];saveSession();tab=1;feed=listing("/m/feed");
+        }});
+    }
     public void commandAction(Command cmd,Displayable item){if(cmd==cancel){display.setCurrent(screen);return;}if(cmd!=save)return;
         final String value=editor.getString();final String selected=mode;
-        if(selected.equals("login")){if(entryStep==0){entry[0]=value;entryStep++;edit("login","Mat khau",TextField.ANY|TextField.PASSWORD);return;}final String email=entry[0],pass=value;display.setCurrent(screen);work(new Task(){public void run()throws Exception{String[]r=single("/m/login","email="+encode(email)+"&password="+encode(pass));me=r[1];token=r[2];saveSession();tab=1;feed=listing("/m/feed");}});return;}
+        if(selected.equals("login-email")||selected.equals("login-password")){
+            if(selected.equals("login-email")){loginEmail=value.trim();welcomeSelection=1;}
+            else{loginPassword=value;welcomeSelection=2;}
+            display.setCurrent(screen);screen.repaint();return;
+        }
         if(selected.equals("register")){entry[entryStep++]=value;if(entryStep<4){String[]names={"Ten hien thi","Tai khoan (@handle)","Email","Mat khau (>=8)"};edit("register",names[entryStep],entryStep==3?TextField.ANY|TextField.PASSWORD:TextField.ANY);return;}
             display.setCurrent(screen);final String[]a=entry;work(new Task(){public void run()throws Exception{single("/m/register","name="+encode(a[0])+"&handle="+encode(a[1])+"&email="+encode(a[2])+"&password="+encode(a[3]));notification="Da dang ky, hay xac nhan email va dang nhap";tab=0;}});return;}
         if(selected.startsWith("server-")){
@@ -174,7 +200,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 if(idx==0)publicHost=address;else if(idx==1)lanHost=address;else customHost=address;
                 if(idx==serverMode&& !address.equals(host)){
                     // Persisting a new active URL also invalidates the previous login.
-                    token="";me="";myName="";saveSession();host=address;
+                    token="";me="";myName="";loginPassword="";saveSession();host=address;
                     tab=8;
                 }
                 if(saveServer())notification="Da luu URL. Nhan OK de chon may chu.";
@@ -256,6 +282,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             txt(g,"MiniSocial",0xFFFFFF,pad+markSize+9,max(3,(headerH-title.getHeight())/2),title);
             txt(g,clock(),0xD6FFE9,max(pad+10,cw-pad-small.stringWidth(clock())),max(3,(headerH-small.getHeight())/2),small);
             if(tab==8)drawServer(g);
+            else if(tab==9)drawInfo(g);
             else if(token.length()==0)drawWelcome(g);
             else if(tab==5)photoView(g);
             else{
@@ -273,31 +300,90 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 txt(g,trim(busy?"Dang tai...":notification,cw-2*pad,small),busy?0x734A0A:DARK,pad,ch-footerH-messageH+2,small);
             }
             grad(g,ch-footerH,footerH);
-            txt(g,tab==8?"Sua (#)":token.length()==0?"Chon":"Tuy chon",0xFFFFFF,pad+3,ch-footerH+max(2,(footerH-bold.getHeight())/2),bold);
-            String back="Quay lai";
+            txt(g,tab==8?"Sua (#)":tab==9?"Thông tin":token.length()==0?"OK: Chon":"Tuy chon",0xFFFFFF,pad+3,ch-footerH+max(2,(footerH-bold.getHeight())/2),bold);
+            String back=(tab==9?"Trở lại":token.length()==0&&tab!=8?"Máy chủ":"Quay lại");
             txt(g,back,0xFFFFFF,cw-pad-3-bold.stringWidth(back),ch-footerH+max(2,(footerH-bold.getHeight())/2),bold);
         }
-        private int welcomeFirstY(){return headerH+max(13,ch/18)+bold.getHeight()+max(16,ch/19);}
-        private int welcomeGap(){return max(7,min(19,ch/26));}
-        private int welcomeRowH(){return max(30,min(62,(bodyBottom-welcomeFirstY()-2*welcomeGap()-12)/3));}
+        /** Compact, responsive web-style login card, rendered without PNG assets. */
+        private final class LoginLayout {
+            int x,y,w,h,titleY,subY,label1Y,field1Y,label2Y,field2Y,fieldH,buttonY,buttonH,linksY;
+            int[] linkX=new int[3],linkW=new int[3];
+        }
+        private LoginLayout loginLayout(){
+            LoginLayout q=new LoginLayout();
+            q.w=min(cw-2*(pad+5),cw>=480?394:420);
+            q.x=(cw-q.w)/2;
+            int room=ch-headerH-footerH-6;
+            boolean tight=room<220;
+            q.fieldH=tight?24:large?39:33;
+            q.buttonH=tight?26:large?39:34;
+            int top=tight?8:large?18:15;
+            int subtitleGap=tight?0:8;
+            int labelGap=tight?5:large?17:10;
+            int inside=max(8,q.w/18);
+            q.titleY=top;
+            q.subY=q.titleY+bold.getHeight()+subtitleGap;
+            q.label1Y=tight?q.titleY+bold.getHeight()+labelGap:q.subY+small.getHeight()+labelGap;
+            q.field1Y=q.label1Y+small.getHeight()+2;
+            q.label2Y=q.field1Y+q.fieldH+(tight?4:large?11:8);
+            q.field2Y=q.label2Y+small.getHeight()+2;
+            q.buttonY=q.field2Y+q.fieldH+(tight?7:large?15:10);
+            q.linksY=q.buttonY+q.buttonH+(tight?8:large?14:12);
+            q.h=q.linksY+small.getHeight()+(tight?9:large?22:15);
+            // On very short viewports, use all the remaining safe space.
+            if(q.h>room-5)q.h=room-5;
+            q.y=headerH+max(3,(room-q.h)/2);
+            String[]links={"Máy chủ","Tạo tài khoản","Thông tin"};
+            int sum=0;
+            for(int i=0;i<3;i++){q.linkW[i]=small.stringWidth(links[i])+8;sum+=q.linkW[i];}
+            int gap=max(4,(q.w-2*inside-sum)/2);
+            int total=sum+2*gap;
+            int at=q.x+max(inside,(q.w-total)/2);
+            for(int i=0;i<3;i++){q.linkX[i]=at;at+=q.linkW[i]+gap;}
+            return q;
+        }
         private void drawWelcome(Graphics g){
-            int y=headerH+max(13,ch/18);
-            txt(g,trim("Ket noi - Chia se - Ban be",cw-2*pad-8,bold),DARK,pad+8,y,bold);
-            int first=welcomeFirstY(),h=welcomeRowH(),gap=welcomeGap();
-            String[]names={"1. Dang nhap","2. Dang ky","3. May chu"};
-            String[]hints={"Tai khoan MiniSocial","Tao tai khoan moi","4G / Wi-Fi / URL"};
+            LoginLayout q=loginLayout();
+            fill(g,0xD8E9E4,q.x+2,q.y+3,q.w,max(0,q.h-1));
+            fill(g,0xFFFFFF,q.x,q.y,q.w,q.h);
+            g.setColor(0xC5E2D7);g.drawRect(q.x,q.y,q.w-1,q.h-1);
+            int inner=q.x+max(9,q.w/19),width=q.w-2*max(9,q.w/19);
+            // Small highlight bar above the login form.
+            fill(g,GREEN,inner,q.y+3,min(45,width/4),3);
+            txt(g,"MiniSocial",DARK,inner,q.y+q.titleY,bold);
+            boolean tight=ch-headerH-footerH-6<220;
+            if(!tight)txt(g,"Đăng nhập để kết nối bạn bè",MUTED,inner,q.y+q.subY,small);
+            txt(g,"Tài khoản / Email",MUTED,inner,q.y+q.label1Y,small);
+            fill(g,welcomeSelection==0?0xE3FFF3:0xF5FAF9,inner,q.y+q.field1Y,width,q.fieldH);
+            g.setColor(welcomeSelection==0?GREEN:0xAACCC2);g.drawRect(inner,q.y+q.field1Y,width-1,q.fieldH-1);
+            txt(g,trim(loginEmail.length()>0?loginEmail:"Nhập email của bạn",width-18,normal),loginEmail.length()>0?TEXT:0x77988E,inner+8,q.y+q.field1Y+max(2,(q.fieldH-normal.getHeight())/2),normal);
+            txt(g,"Mật khẩu",MUTED,inner,q.y+q.label2Y,small);
+            fill(g,welcomeSelection==1?0xE3FFF3:0xF5FAF9,inner,q.y+q.field2Y,width,q.fieldH);
+            g.setColor(welcomeSelection==1?GREEN:0xAACCC2);g.drawRect(inner,q.y+q.field2Y,width-1,q.fieldH-1);
+            String mask="";for(int i=0;i<min(16,loginPassword.length());i++)mask+="*";
+            txt(g,mask.length()>0?mask:"Nhập mật khẩu",mask.length()>0?TEXT:0x77988E,inner+8,q.y+q.field2Y+max(2,(q.fieldH-normal.getHeight())/2),normal);
+            fill(g,welcomeSelection==2?SKY:GREEN_DEEP,inner,q.y+q.buttonY,width,q.buttonH);
+            if(welcomeSelection==2){g.setColor(0xFFFFFF);g.drawRect(inner+2,q.y+q.buttonY+2,max(0,width-5),max(0,q.buttonH-5));}
+            String button="Đăng nhập";
+            txt(g,button,0xFFFFFF,inner+max(4,(width-bold.stringWidth(button))/2),q.y+q.buttonY+max(2,(q.buttonH-bold.getHeight())/2),bold);
+            String[]links={"Máy chủ","Tạo tài khoản","Thông tin"};
             for(int i=0;i<3;i++){
-                int ry=first+i*(h+gap),innerX=pad+5;
-                panel(g,innerX,ry,cw-2*innerX,h,i==welcomeSelection);
-                int ribbon=max(4,min(10,h/6));
-                fill(g,i==welcomeSelection?GREEN:0x7CCCB0,innerX+1,ry+1,ribbon,h-2);
-                int tx=innerX+ribbon+max(8,h/9);
-                txt(g,trim(names[i],cw-tx-pad-12,bold),i==welcomeSelection?DARK:TEXT,tx,ry+max(3,(h-bold.getHeight()-(h>48?small.getHeight():0))/2),bold);
-                if(h>46)txt(g,trim(hints[i],cw-tx-pad-12,small),MUTED,tx,ry+h-small.getHeight()-5,small);
+                int color=welcomeSelection==i+3?SKY:GREEN_DEEP;
+                txt(g,links[i],color,q.linkX[i]+4,q.y+q.linksY,small);
+                if(welcomeSelection==i+3)fill(g,SKY,q.linkX[i]+3,q.y+q.linksY+small.getHeight()+1,max(2,q.linkW[i]-6),1);
             }
-            int bottom=first+3*h+2*gap;
-            if(bottom+small.getHeight()+5<bodyBottom)
-                txt(g,trim("UP/DOWN: chon  |  OK: mo",cw-2*pad-14,small),MUTED,pad+8,bottom+6,small);
+        }
+        private void drawInfo(Graphics g){
+            int w=min(cw-2*pad-12,400),x=(cw-w)/2,y=headerH+max(12,(bodyBottom-headerH-180)/2);
+            int h=min(bodyBottom-y-5,large?225:170);
+            panel(g,x,y,w,h,false);
+            int ix=x+10;
+            txt(g,"Về MiniSocial",DARK,ix,y+12,bold);
+            txt(g,"Phiên bản 1.3.0",GREEN_DEEP,ix,y+12+bold.getHeight()+9,normal);
+            int ty=y+12+bold.getHeight()+normal.getHeight()+22;
+            txt(g,trim("Mạng xã hội dành cho Java ME",w-20,small),TEXT,ix,ty,small);
+            txt(g,trim("Xubi + Supabase | Nokia E72 / E6",w-20,small),MUTED,ix,ty+small.getHeight()+7,small);
+            txt(g,trim("Phím 0 hoặc Quay lại để đóng",w-20,small),SKY,ix,ty+2*(small.getHeight()+7),small);
         }
         private int serverFirstY(){return headerH+max(14,ch/30)+bold.getHeight()+max(10,ch/45);}
         private int serverGap(){return large?10:5;}
@@ -526,7 +612,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             }});
         }
         private void back(){
-            if(tab==8){tab=token.length()==0?0:1;screen.repaint();return;}
+            if(tab==8||tab==9){tab=token.length()==0?0:1;screen.repaint();return;}
             if(tab==5){tab=4;reload();}
             else if(tab==6){tab=1;reload();}
             else if(tab==7){tab=3;reload();}
@@ -539,9 +625,12 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             if(tab==7)return incoming.size();return 0;
         }
         private void chooseWelcome(){
-            if(welcomeSelection==0)auth(false);
-            else if(welcomeSelection==1)auth(true);
-            else {serverSelection=serverMode;tab=8;repaint();}
+            if(welcomeSelection==0)editLogin(true);
+            else if(welcomeSelection==1)editLogin(false);
+            else if(welcomeSelection==2)submitLogin();
+            else if(welcomeSelection==3){serverSelection=serverMode;tab=8;repaint();}
+            else if(welcomeSelection==4)auth(true);
+            else {tab=9;repaint();}
         }
         private void chooseNav(int index){
             if(index==0)navigate(1);
@@ -553,6 +642,10 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             if(busy)return;
             int action=0;try{action=getGameAction(k);}catch(Exception ignored){}
             // Tested game-action constants are used instead of raw arrow key codes.
+            if(tab==9){
+                if(k==-7||k==-6||k=='0'||action==Canvas.FIRE){tab=0;repaint();}
+                return;
+            }
             if(tab==8){
                 if(k==-7||k=='0'){back();return;}
                 if(action==Canvas.UP){serverSelection=(serverSelection+2)%3;repaint();return;}
@@ -566,14 +659,19 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 return;
             }
             if(token.length()==0){
-                if(action==Canvas.UP){welcomeSelection=(welcomeSelection+2)%3;repaint();return;}
-                if(action==Canvas.DOWN){welcomeSelection=(welcomeSelection+1)%3;repaint();return;}
-                if(action==Canvas.LEFT){welcomeSelection=(welcomeSelection+2)%3;repaint();return;}
-                if(action==Canvas.RIGHT){welcomeSelection=(welcomeSelection+1)%3;repaint();return;}
-                if(k=='1')auth(false);else if(k=='2')auth(true);
-                else if(k=='3'||k=='0'){tab=8;serverSelection=serverMode;repaint();}
-                else if(action==Canvas.FIRE||k==-6)chooseWelcome();
-                return;
+                if(action==Canvas.UP){welcomeSelection=(welcomeSelection+5)%6;repaint();return;}
+                if(action==Canvas.DOWN){welcomeSelection=(welcomeSelection+1)%6;repaint();return;}
+                if(action==Canvas.LEFT){welcomeSelection=welcomeSelection>=3?3+(welcomeSelection-3+2)%3:(welcomeSelection+2)%3;repaint();return;}
+                if(action==Canvas.RIGHT){welcomeSelection=welcomeSelection>=3?3+(welcomeSelection-3+1)%3:(welcomeSelection+1)%3;repaint();return;}
+                if(k=='1')welcomeSelection=0;
+                else if(k=='2')welcomeSelection=1;
+                else if(k=='3')welcomeSelection=2;
+                else if(k=='4'||k=='#')welcomeSelection=3;
+                else if(k=='5')welcomeSelection=4;
+                else if(k=='6')welcomeSelection=5;
+                else if(k==-7){tab=8;serverSelection=serverMode;repaint();return;}
+                if(action==Canvas.FIRE||k==-6)chooseWelcome();
+                repaint();return;
             }
             if(k=='0'&&tab==1){tab=8;serverSelection=serverMode;repaint();return;}
             if(k==-7||k=='0'){back();repaint();return;}
@@ -618,7 +716,11 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         protected void pointerPressed(int x,int y){
             if(busy)return;
             layout();
-            if(y>=0&&y<headerH){tab=8;serverSelection=serverMode;repaint();return;}
+            if(y>=0&&y<headerH){
+                if(tab==8||tab==9)back();
+                else if(token.length()>0){tab=8;serverSelection=serverMode;}
+                repaint();return;
+            }
             if(tab==8){
                 int first=serverFirstY(),stride=serverRowH()+serverGap();
                 int idx=(y-first)/max(1,stride);
@@ -630,10 +732,20 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 else if(y>=ch-footerH){back();}
                 return;
             }
+            if(tab==9){if(y>=ch-footerH)back();else back();repaint();return;}
             if(token.length()==0){
-                int first=welcomeFirstY(),stride=welcomeRowH()+welcomeGap();
-                int idx=(y-first)/max(1,stride);
-                if(y>=first&&idx>=0&&idx<3){welcomeSelection=idx;chooseWelcome();}
+                LoginLayout q=loginLayout();int inner=q.x+max(9,q.w/19),right=inner+q.w-2*max(9,q.w/19);
+                if(x>=inner&&x<=right){
+                    if(y>=q.y+q.field1Y&&y<q.y+q.field1Y+q.fieldH){welcomeSelection=0;chooseWelcome();return;}
+                    if(y>=q.y+q.field2Y&&y<q.y+q.field2Y+q.fieldH){welcomeSelection=1;chooseWelcome();return;}
+                    if(y>=q.y+q.buttonY&&y<q.y+q.buttonY+q.buttonH){welcomeSelection=2;chooseWelcome();return;}
+                }
+                if(y>=q.y+q.linksY-3&&y<=q.y+q.linksY+small.getHeight()+8){
+                    for(int i=0;i<3;i++)if(x>=q.linkX[i]&&x<q.linkX[i]+q.linkW[i]){
+                        welcomeSelection=i+3;chooseWelcome();return;
+                    }
+                }
+                if(y>=ch-footerH){if(x<cw/2)chooseWelcome();else{tab=8;serverSelection=serverMode;}repaint();}
                 return;
             }
             if(y>=ch-footerH){if(x>=cw/2)back();repaint();return;}

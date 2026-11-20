@@ -23,7 +23,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import zipfile
-          with zipfile.ZipFile('client/dist/MiniSocial-E72.jar') as z:
+          with zipfile.ZipFile('client/dist/MiniSocial-Responsive.jar') as z:
               classes=[x for x in z.namelist() if x.endswith('.class')]
               assert classes
               for cls in classes:
