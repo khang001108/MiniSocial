@@ -129,13 +129,16 @@ def main():
  for f in (BUILD/'classes').rglob('*.class'):
   out=pv/f.relative_to(BUILD/'classes');out.parent.mkdir(parents=True,exist_ok=True)
   out.write_bytes(rewrite(f.read_bytes()))
- manifest='''Manifest-Version: 1.0\nMIDlet-1: MiniSocial,,minisocial.MiniSocialMidlet\nMIDlet-Name: MiniSocial\nMIDlet-Version: 1.8.0\nMIDlet-Vendor: Xubi\nMicroEdition-Configuration: CLDC-1.1\nMicroEdition-Profile: MIDP-2.0\nMIDlet-Permissions-Opt: javax.microedition.io.Connector.http,javax.microedition.io.Connector.https,javax.microedition.io.Connector.file.read\nMiniSocial-Api-Url: https://minisocial.xubi.org\n\n'''
+ manifest='''Manifest-Version: 1.0\nMIDlet-1: MiniSocial,,minisocial.MiniSocialMidlet\nMIDlet-Name: MiniSocial\nMIDlet-Version: 1.8.1\nMIDlet-Vendor: Xubi\nMicroEdition-Configuration: CLDC-1.1\nMicroEdition-Profile: MIDP-2.0\nMIDlet-Permissions-Opt: javax.microedition.io.Connector.http,javax.microedition.io.Connector.https,javax.microedition.io.Connector.file.read\nMiniSocial-Api-Url: https://minisocial.xubi.org\n\n'''
  dist=ROOT/'dist';dist.mkdir(exist_ok=True)
  jar=dist/'MiniSocial-Responsive.jar';
  with zipfile.ZipFile(jar,'w',zipfile.ZIP_DEFLATED,compresslevel=9) as z:
   z.writestr('META-INF/MANIFEST.MF',manifest)
   for f in pv.rglob('*.class'):z.write(f,f.relative_to(pv).as_posix())
- jad='''MIDlet-Name: MiniSocial\nMIDlet-1: MiniSocial,,minisocial.MiniSocialMidlet\nMIDlet-Version: 1.8.0\nMIDlet-Vendor: Xubi\nMicroEdition-Configuration: CLDC-1.1\nMicroEdition-Profile: MIDP-2.0\nMIDlet-Permissions-Opt: javax.microedition.io.Connector.http,javax.microedition.io.Connector.https,javax.microedition.io.Connector.file.read\nMiniSocial-Api-Url: https://minisocial.xubi.org\nMIDlet-Jar-URL: MiniSocial-Responsive.jar\nMIDlet-Jar-Size: %d\n'''%jar.stat().st_size
+  # Only the runtime subset of UI v2 is embedded; full design pack stays in design/.
+  resources=ROOT/'resources'
+  for f in sorted(resources.rglob('*.png')):z.write(f,f.relative_to(resources).as_posix())
+ jad='''MIDlet-Name: MiniSocial\nMIDlet-1: MiniSocial,,minisocial.MiniSocialMidlet\nMIDlet-Version: 1.8.1\nMIDlet-Vendor: Xubi\nMicroEdition-Configuration: CLDC-1.1\nMicroEdition-Profile: MIDP-2.0\nMIDlet-Permissions-Opt: javax.microedition.io.Connector.http,javax.microedition.io.Connector.https,javax.microedition.io.Connector.file.read\nMiniSocial-Api-Url: https://minisocial.xubi.org\nMIDlet-Jar-URL: MiniSocial-Responsive.jar\nMIDlet-Jar-Size: %d\n'''%jar.stat().st_size
  (dist/'MiniSocial-Responsive.jad').write_text(jad)
  print('CLDC JAR:',jar,'size',jar.stat().st_size,'bytes; classes',len(list(pv.rglob('*.class'))))
 if __name__=='__main__':main()

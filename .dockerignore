@@ -7,3 +7,6 @@
 **/.cache
 **/__pycache__
 *.log
+
+# Full design pack is kept for developers; not needed in Docker build context
+design/

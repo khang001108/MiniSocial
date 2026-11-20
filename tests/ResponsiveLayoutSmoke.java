@@ -11,7 +11,7 @@ public class ResponsiveLayoutSmoke {
     }
     private static Vector data(int n,String[]row){Vector v=new Vector();for(int i=0;i<n;i++)v.addElement(row);return v;}
     public static void main(String[]args)throws Exception{
-        int[][] sizes={{240,320},{320,240},{360,640},{640,480}};
+        int[][] sizes={{240,320},{320,240},{360,640},{640,360},{640,480}};
         Class<?> sc=Class.forName("minisocial.MiniSocialMidlet$SocialCanvas");
         Constructor<?> c=sc.getDeclaredConstructors()[0];c.setAccessible(true);
         Method paint=sc.getDeclaredMethod("paint",Graphics.class);paint.setAccessible(true);
@@ -41,7 +41,7 @@ public class ResponsiveLayoutSmoke {
                 }
             }
         }
-        System.out.println("PASS " + screens + " screen configurations across four resolutions; "+operations+" draw operations checked.");
+        System.out.println("PASS " + screens + " screen configurations across five resolutions; "+operations+" draw operations checked.");
         System.out.println("Note: this is a layout smoke test, not a Nokia device/emulator validation.");
     }
 }

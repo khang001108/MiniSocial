@@ -12,7 +12,7 @@ public final class LucideMenuSmoke {
  static void paint(Object c)throws Exception{Method m=c.getClass().getDeclaredMethod("paint",Graphics.class);m.setAccessible(true);Graphics g=new Graphics();m.invoke(c,g);check(g.errors==0,"Drawing out-of-bounds: "+g.errors);}
  static Vector rows(){Vector r=new Vector();r.addElement(new String[]{"id","user","Khazg","2026-11-21","1","2","Nokia Asha 302", "", "Nokia Asha 302"});return r;}
  public static void main(String[]args)throws Exception{
-  int[][] sizes={{240,320},{320,240},{360,640},{640,480}};int count=0;
+  int[][] sizes={{240,320},{320,240},{360,640},{640,360},{640,480}};int count=0;
   for(int[] sz:sizes){
    Canvas.TEST_WIDTH=sz[0];Canvas.TEST_HEIGHT=sz[1];
    MiniSocialMidlet a=new MiniSocialMidlet();a.startApp();Object c=get(a,"screen");
@@ -28,6 +28,6 @@ public final class LucideMenuSmoke {
    press(c,-7);check(number(a,"tab")==1,"cancel exit");
    put(a,"tab",Integer.valueOf(17));press(c,'1');check("delete-password".equals(get(a,"mode")),"delete requires password editor");
   }
-  System.out.println("PASS " + count + " new screen layouts, menu, theme and Nokia softkeys across 4 resolutions");
+  System.out.println("PASS " + count + " new screen layouts, menu, theme and Nokia softkeys across 5 resolutions");
  }
 }

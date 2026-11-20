@@ -1,3 +1,9 @@
+## MiniSocial v1.8.1 — Messenger Blue UI Assets v2.0
+
+Bản nâng cấp giao diện trực tiếp từ v1.8.0; **có 640×360**, bên cạnh E72 320×240 và E6 640×480, với icon/PNG thực trong JAR. Xem [HUONG-DAN-CAP-NHAT-v1.8.1-UI-v2.md](HUONG-DAN-CAP-NHAT-v1.8.1-UI-v2.md). Backend, endpoint, schema Supabase không đổi.
+
+---
+
 ## MiniSocial v1.8.0 — 3 tab + Lucide-style Canvas + Tùy chọn Nokia
 
 **New:** Trang chủ / Chat / Bạn bè; phím mềm trái mở Tùy chọn (Cá nhân, Cài đặt, Lịch sử, Dung lượng), trong cuộc hội thoại mở ô Gửi; phím mềm phải Trở về/Thoát. Giao diện outline-icon vẽ bằng MIDP Canvas, hỗ trợ theme Sáng/Tối; API lịch sử, hạn mức dung lượng và xóa ảnh/tài khoản xác thực. Xem [HUONG-DAN-CAP-NHAT-v1.8.0.md](HUONG-DAN-CAP-NHAT-v1.8.0.md). Dữ liệu Supabase tiếp tục dùng schema v1.7, không có migration SQL mới.

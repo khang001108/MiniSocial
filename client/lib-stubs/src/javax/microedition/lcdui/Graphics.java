@@ -15,6 +15,7 @@ public class Graphics {
     public void drawLine(int x1,int y1,int x2,int y2){validate(Math.min(x1,x2),Math.min(y1,y2),Math.abs(x2-x1),Math.abs(y2-y1));}
     public void drawArc(int x,int y,int w,int h,int startAngle,int arcAngle){validate(x,y,w,h);}
     public void drawRoundRect(int x,int y,int w,int h,int arcWidth,int arcHeight){validate(x,y,w,h);}
+    public void fillRoundRect(int x,int y,int w,int h,int arcWidth,int arcHeight){validate(x,y,w,h);}
     public void fillRect(int x,int y,int w,int h){validate(x,y,w,h);}
     public void drawRect(int x,int y,int w,int h){validate(x,y,w,h);}
     public void setFont(Font f){font=f;}
