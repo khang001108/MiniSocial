@@ -10,7 +10,13 @@ import java.util.Vector;
 /** Responsive MiniSocial for 240x320, 320x240, 360x640 and 640x480, CLDC 1.1 / MIDP 2.0. */
 public final class MiniSocialMidlet extends MIDlet implements CommandListener {
     private Display display; private SocialCanvas screen;
-    private String host="https://minisocial.xubi.org";
+    private static final String DEFAULT_PUBLIC="https://minisocial.xubi.org";
+    private static final String DEFAULT_LAN="http://192.168.1.127:18087";
+    private String publicHost=DEFAULT_PUBLIC,lanHost=DEFAULT_LAN,customHost="https://minisocial.xubi.org";
+    private String host=DEFAULT_PUBLIC;
+    private int serverMode=0,serverSelection=0,welcomeSelection=0;
+    private int navSelection=0;
+    private boolean navFocus=false;
     private String token="", me="", myName="";
     private TextBox editor;private final Command save=new Command("OK",Command.OK,1),cancel=new Command("Huy",Command.CANCEL,2);
     private String mode="", target="",pendingMedia="";
@@ -21,14 +27,104 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
     private int tab=1,selection=0;private String photoId="";
 
     public void startApp(){
-        display=Display.getDisplay(this);String x=getAppProperty("MiniSocial-Api-Url");if(x!=null&&x.startsWith("https://"))host=x;
-        while(host.endsWith("/"))host=host.substring(0,host.length()-1);
-        readSession();screen=new SocialCanvas();display.setCurrent(screen);if(token.length()>0)reload();
+        display=Display.getDisplay(this);
+        String x=getAppProperty("MiniSocial-Api-Url");if(x!=null&&x.startsWith("https://"))publicHost=x;
+        readServer();readSession();screen=new SocialCanvas();display.setCurrent(screen);
+        if(token.length()>0)reload();else tab=0;
     }
     public void pauseApp(){}
     public void destroyApp(boolean unconditional){}
     private void readSession(){try{RecordStore r=RecordStore.openRecordStore("ms_session",true);if(r.getNumRecords()>0){String[]a=split(new String(r.getRecord(1),"UTF-8"),'\n');if(a.length>=2){me=a[0];token=a[1];}}r.closeRecordStore();}catch(Exception ignored){}}
     private void saveSession(){try{RecordStore r=RecordStore.openRecordStore("ms_session",true);byte[]v=(me+"\n"+token).getBytes("UTF-8");if(r.getNumRecords()==0)r.addRecord(v,0,v.length);else r.setRecord(1,v,0,v.length);r.closeRecordStore();}catch(Exception ignored){}}
+    // Store only server choices; no secret is stored in this record store.
+    private void readServer(){
+        try{
+            RecordStore r=RecordStore.openRecordStore("ms_hosts_v12",true);
+            if(r.getNumRecords()>0){
+                String[]a=split(new String(r.getRecord(1),"UTF-8"),'\n');
+                if(a.length>=4){
+                    publicHost=normalizeHost(a[1],0);lanHost=normalizeHost(a[2],1);
+                    customHost=normalizeHost(a[3],2);
+                    int m=Integer.parseInt(a[0]);serverMode=m>=0&&m<3?m:0;
+                }
+            }
+            r.closeRecordStore();
+        }catch(Exception ignored){serverMode=0;publicHost=DEFAULT_PUBLIC;lanHost=DEFAULT_LAN;customHost=DEFAULT_PUBLIC;}
+        host=serverAddress(serverMode);
+    }
+    private boolean saveServer(){
+        try{
+            RecordStore r=RecordStore.openRecordStore("ms_hosts_v12",true);
+            byte[]b=(serverMode+"\n"+publicHost+"\n"+lanHost+"\n"+customHost).getBytes("UTF-8");
+            if(r.getNumRecords()==0)r.addRecord(b,0,b.length);else r.setRecord(1,b,0,b.length);
+            r.closeRecordStore();return true;
+        }catch(Exception e){notification="Khong luu duoc may chu";return false;}
+    }
+    private String serverAddress(int idx){return idx==0?publicHost:idx==1?lanHost:customHost;}
+    // Network requests use HTTPS publicly; HTTP is permitted only for private LAN/localhost.
+    private String normalizeHost(String value,int idx)throws Exception{
+        String u=value==null?"":value.trim();
+        if(u.length()==0||u.length()>180)throw new Exception("Dia chi may chu khong hop le");
+        if(u.indexOf("://")<0)u=(idx==1?"http://":"https://")+u;
+        while(u.endsWith("/"))u=u.substring(0,u.length()-1);
+        if(u.indexOf(' ')>=0||u.indexOf('@')>=0||u.indexOf('?')>=0||u.indexOf('#')>=0)throw new Exception("Chi nhap ten mien/IP va cong");
+        boolean secure=u.startsWith("https://"),plain=u.startsWith("http://");
+        if(!secure&&!plain)throw new Exception("Chi ho tro http(s)://, khong phai socket://");
+        String site=u.substring(secure?8:7);
+        if(site.length()==0||site.indexOf('/')>=0||site.indexOf('\\')>=0||site.indexOf(':')==0)throw new Exception("Chi nhap domain/IP, khong them duong dan");
+        if(plain){
+            String h=site;int colon=h.indexOf(':');if(colon>=0)h=h.substring(0,colon);
+            if(!isLocalIPv4(h))throw new Exception("Internet phai dung HTTPS; HTTP chi danh cho LAN");
+        }
+        return u;
+    }
+    private static boolean isLocalIPv4(String h){
+        if(h.equals("localhost"))return true;
+        String[]a=split(h,'.');if(a.length!=4)return false;
+        int[]v=new int[4];
+        try{
+            for(int i=0;i<4;i++){
+                if(a[i].length()==0||a[i].length()>3)return false;
+                for(int j=0;j<a[i].length();j++)if(a[i].charAt(j)<'0'||a[i].charAt(j)>'9')return false;
+                v[i]=Integer.parseInt(a[i]);if(v[i]>255)return false;
+            }
+        }catch(Exception e){return false;}
+        return v[0]==10 || (v[0]==172&&v[1]>=16&&v[1]<=31)
+               || (v[0]==192&&v[1]==168) || (v[0]==127&&v[1]==0&&v[2]==0&&v[3]==1);
+    }
+    private void setServer(int idx){
+        String next=serverAddress(idx);
+        if(!next.equals(host)){
+            // A Supabase login token from server A must never be sent to server B.
+            token="";me="";myName="";saveSession();
+            feed=new Vector();friends=new Vector();messages=new Vector();incoming=new Vector();
+        }
+        serverMode=idx;host=next;
+        if(saveServer())notification="May chu: "+(idx==0?"Internet":idx==1?"Wi-Fi/LAN":"Tuy chinh");
+        tab=0;welcomeSelection=0;screen.repaint();
+    }
+    private void serverEditor(){
+        int idx=serverSelection;
+        mode=idx==0?"server-public":idx==1?"server-lan":"server-custom";
+        String old=serverAddress(idx);
+        editor=new TextBox("Dia chi "+(idx==0?"Internet":idx==1?"Wi-Fi/LAN":"tuy chinh"),old,180,TextField.ANY);
+        editor.addCommand(save);editor.addCommand(cancel);editor.setCommandListener(this);display.setCurrent(editor);
+    }
+    private void pingServer(){
+        final String address=serverAddress(serverSelection);
+        work(new Task(){public void run()throws Exception{
+            HttpConnection c=null;InputStream in=null;
+            try{
+                c=(HttpConnection)Connector.open(address+"/health",Connector.READ_WRITE,true);
+                c.setRequestMethod(HttpConnection.GET);
+                int code=c.getResponseCode();in=c.openInputStream();
+                byte[]b=new byte[160];int n=in.read(b);
+                String reply=n>0?new String(b,0,n,"UTF-8"):"";
+                if(code!=200||reply.indexOf("\"ok\":true")<0&&reply.indexOf("\"ok\": true")<0)throw new Exception("May chu tra ve HTTP "+code);
+                notification="Ket noi thanh cong: "+address;
+            }finally{if(in!=null)in.close();if(c!=null)c.close();}
+        }});
+    }
     private void logout(){token="";me="";myName="";saveSession();tab=0;screen.repaint();}
     private interface Task{void run()throws Exception;}
     private void work(final Task t){if(busy)return;busy=true;notification="";screen.repaint();new Thread(new Runnable(){public void run(){try{t.run();}catch(Exception e){notification=e.getMessage();}finally{busy=false;screen.repaint();}}}).start();}
@@ -59,7 +155,11 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         else if(requested==5){}else if(requested==6)comments=listing("/m/comments?post="+encode(target));
         else if(requested==7)incoming=listing("/m/requests");
     }});}
-    private void navigate(int t){if(token.length()==0){tab=0;screen.repaint();return;}tab=t;selection=0;reload();}
+    private void navigate(int t){
+        if(token.length()==0){tab=0;screen.repaint();return;}
+        tab=t;selection=0;navFocus=false;navSelection=t==2?1:t==3?2:t==4?3:0;
+        reload();
+    }
     private void edit(String m,String title,int constraints){mode=m;editor=new TextBox(title,"",500,constraints);editor.addCommand(save);editor.addCommand(cancel);editor.setCommandListener(this);display.setCurrent(editor);}
     private void auth(boolean signup){entryStep=0;entry=new String[4];edit(signup?"register":"login",signup?"Ten hien thi":"Email",TextField.ANY);}
     public void commandAction(Command cmd,Displayable item){if(cmd==cancel){display.setCurrent(screen);return;}if(cmd!=save)return;
@@ -67,6 +167,21 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         if(selected.equals("login")){if(entryStep==0){entry[0]=value;entryStep++;edit("login","Mat khau",TextField.ANY|TextField.PASSWORD);return;}final String email=entry[0],pass=value;display.setCurrent(screen);work(new Task(){public void run()throws Exception{String[]r=single("/m/login","email="+encode(email)+"&password="+encode(pass));me=r[1];token=r[2];saveSession();tab=1;feed=listing("/m/feed");}});return;}
         if(selected.equals("register")){entry[entryStep++]=value;if(entryStep<4){String[]names={"Ten hien thi","Tai khoan (@handle)","Email","Mat khau (>=8)"};edit("register",names[entryStep],entryStep==3?TextField.ANY|TextField.PASSWORD:TextField.ANY);return;}
             display.setCurrent(screen);final String[]a=entry;work(new Task(){public void run()throws Exception{single("/m/register","name="+encode(a[0])+"&handle="+encode(a[1])+"&email="+encode(a[2])+"&password="+encode(a[3]));notification="Da dang ky, hay xac nhan email va dang nhap";tab=0;}});return;}
+        if(selected.startsWith("server-")){
+            try{
+                int idx=selected.equals("server-public")?0:selected.equals("server-lan")?1:2;
+                String address=normalizeHost(value,idx);
+                if(idx==0)publicHost=address;else if(idx==1)lanHost=address;else customHost=address;
+                if(idx==serverMode&& !address.equals(host)){
+                    // Persisting a new active URL also invalidates the previous login.
+                    token="";me="";myName="";saveSession();host=address;
+                    tab=8;
+                }
+                if(saveServer())notification="Da luu URL. Nhan OK de chon may chu.";
+                display.setCurrent(screen);screen.repaint();
+            }catch(Exception e){notification=e.getMessage();display.setCurrent(screen);screen.repaint();}
+            return;
+        }
         display.setCurrent(screen);
         if(selected.equals("post")){final String data="body="+encode(value)+"&media="+encode(pendingMedia);work(new Task(){public void run()throws Exception{single("/m/post",data);pendingMedia="";feed=listing("/m/feed");}});}
         else if(selected.equals("chat")){final String peer0=peer;work(new Task(){public void run()throws Exception{single("/m/message","user="+encode(peer0)+"&body="+encode(value));messages=listing("/m/chat?user="+encode(peer0));}});}
@@ -81,7 +196,10 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         }});}
     }
     private byte[]readFile(String path)throws Exception{String url=path.startsWith("file:")?path:"file:///"+path;Connection c=null;InputStream in=null;try{c=Connector.open(url);if(!(c instanceof InputConnection))throw new Exception("JSR-75 FileConnection unavailable");in=((InputConnection)c).openInputStream();ByteArrayOutputStream buf=new ByteArrayOutputStream();byte[]bytes=new byte[1024];int n;while((n=in.read(bytes))!=-1){if(buf.size()+n>180*1024)throw new Exception("Gioi han 180 KB / anh");buf.write(bytes,0,n);}return buf.toByteArray();}finally{if(in!=null)in.close();if(c!=null)c.close();}}
-    private static int BLUE=0x0750B6, DARK=0x033C8C, LIGHT=0xD7E7FF, TEXT=0x15233C;
+    // Unified green + sea-teal palette; contrast remains legible on 240x320 Nokia screens.
+    private static int BLUE=0x0B9B88, DARK=0x085C50, LIGHT=0xD8F5E8, TEXT=0x183F3A;
+    private static int GREEN=0x16A575, GREEN_DEEP=0x087B61, SKY=0x0C8FAD;
+    private static int BG=0xF0F8F5, MUTED=0x53756D, BORDER=0xBADDD0;
     private static int num(String v){try{return Integer.parseInt(v);}catch(Exception e){return 0;}}
     private static String piece(String[]f,int ix){return ix<f.length?f[ix]:"";}
     /**
@@ -120,14 +238,25 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             g.drawString(s,x,y,Graphics.TOP|Graphics.LEFT);
         }
         private void grad(Graphics g,int y,int h){
-            for(int j=0;j<h;j+=2){int t=j*50/max(1,h);fill(g,((23+t)<<16)|((90+t)<<8)|(170+t),0,y,cw,2);}
+            for(int j=0;j<h;j+=2){
+                int t=j*34/max(1,h);
+                fill(g,((5+t)<<16)|((92+t)<<8)|(79+t),0,y,cw,min(2,h-j));
+            }
+        }
+        private void brandMark(Graphics g,int x,int y,int size){
+            // Small square-mark avoids loading PNG on memory-constrained J2ME phones.
+            fill(g,0xB6F7DC,x,y,size,size);
+            fill(g,GREEN_DEEP,x+size/4,y+size/4,max(2,size/2),max(2,size/2));
         }
         protected void paint(Graphics g){
-            layout();fill(g,0xF1F5FC,0,0,cw,ch);
+            layout();fill(g,BG,0,0,cw,ch);
             grad(g,0,headerH);
-            txt(g,"MiniSocial",0xFFFFFF,pad+5,max(3,(headerH-title.getHeight())/2),title);
-            txt(g,clock(),0xFFFFFF,max(pad+10,cw-pad-small.stringWidth(clock())),max(3,(headerH-small.getHeight())/2),small);
-            if(token.length()==0)drawWelcome(g);
+            int markSize=max(9,min(17,headerH/3));
+            brandMark(g,pad+3,max(2,(headerH-markSize)/2),markSize);
+            txt(g,"MiniSocial",0xFFFFFF,pad+markSize+9,max(3,(headerH-title.getHeight())/2),title);
+            txt(g,clock(),0xD6FFE9,max(pad+10,cw-pad-small.stringWidth(clock())),max(3,(headerH-small.getHeight())/2),small);
+            if(tab==8)drawServer(g);
+            else if(token.length()==0)drawWelcome(g);
             else if(tab==5)photoView(g);
             else{
                 topNav(g);
@@ -140,24 +269,62 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             }
             if(busy||notification!=null&&notification.length()>0){
                 int messageH=large?24:16;
-                fill(g,busy?0xFFEECC:0xFFE4D9,0,ch-footerH-messageH,cw,messageH);
-                txt(g,trim(busy?"Dang tai...":notification,cw-2*pad,small),busy?0x6C3D08:0x9C1C1C,pad,ch-footerH-messageH+2,small);
+                fill(g,busy?0xFFF1CE:0xD9F6E6,0,ch-footerH-messageH,cw,messageH);
+                txt(g,trim(busy?"Dang tai...":notification,cw-2*pad,small),busy?0x734A0A:DARK,pad,ch-footerH-messageH+2,small);
             }
             grad(g,ch-footerH,footerH);
-            txt(g,token.length()==0?"Chon":"Tuy chon",0xFFFFFF,pad+3,ch-footerH+max(2,(footerH-bold.getHeight())/2),bold);
+            txt(g,tab==8?"Sua (#)":token.length()==0?"Chon":"Tuy chon",0xFFFFFF,pad+3,ch-footerH+max(2,(footerH-bold.getHeight())/2),bold);
             String back="Quay lai";
             txt(g,back,0xFFFFFF,cw-pad-3-bold.stringWidth(back),ch-footerH+max(2,(footerH-bold.getHeight())/2),bold);
         }
+        private int welcomeFirstY(){return headerH+max(13,ch/18)+bold.getHeight()+max(16,ch/19);}
+        private int welcomeGap(){return max(7,min(19,ch/26));}
+        private int welcomeRowH(){return max(30,min(62,(bodyBottom-welcomeFirstY()-2*welcomeGap()-12)/3));}
         private void drawWelcome(Graphics g){
-            int y=headerH+max(14,ch/13);
-            txt(g,trim("Mang xa hoi Java ME",cw-2*pad,bold),DARK,pad+6,y,bold);
-            y+=bold.getHeight()+max(20,ch/18);
-            panel(g,pad+4,y,cw-2*(pad+4),max(35,normal.getHeight()+14),true);
-            txt(g,"1 - Dang nhap",DARK,pad+14,y+9,normal);
-            y+=max(48,normal.getHeight()+27);
-            panel(g,pad+4,y,cw-2*(pad+4),max(35,normal.getHeight()+14),false);
-            txt(g,"2 - Dang ky",DARK,pad+14,y+9,normal);
-            if(y+70<ch-footerH)txt(g,"Xubi + Supabase / HTTPS",TEXT,pad+6,ch-footerH-small.getHeight()-14,small);
+            int y=headerH+max(13,ch/18);
+            txt(g,trim("Ket noi - Chia se - Ban be",cw-2*pad-8,bold),DARK,pad+8,y,bold);
+            int first=welcomeFirstY(),h=welcomeRowH(),gap=welcomeGap();
+            String[]names={"1. Dang nhap","2. Dang ky","3. May chu"};
+            String[]hints={"Tai khoan MiniSocial","Tao tai khoan moi","4G / Wi-Fi / URL"};
+            for(int i=0;i<3;i++){
+                int ry=first+i*(h+gap),innerX=pad+5;
+                panel(g,innerX,ry,cw-2*innerX,h,i==welcomeSelection);
+                int ribbon=max(4,min(10,h/6));
+                fill(g,i==welcomeSelection?GREEN:0x7CCCB0,innerX+1,ry+1,ribbon,h-2);
+                int tx=innerX+ribbon+max(8,h/9);
+                txt(g,trim(names[i],cw-tx-pad-12,bold),i==welcomeSelection?DARK:TEXT,tx,ry+max(3,(h-bold.getHeight()-(h>48?small.getHeight():0))/2),bold);
+                if(h>46)txt(g,trim(hints[i],cw-tx-pad-12,small),MUTED,tx,ry+h-small.getHeight()-5,small);
+            }
+            int bottom=first+3*h+2*gap;
+            if(bottom+small.getHeight()+5<bodyBottom)
+                txt(g,trim("UP/DOWN: chon  |  OK: mo",cw-2*pad-14,small),MUTED,pad+8,bottom+6,small);
+        }
+        private int serverFirstY(){return headerH+max(14,ch/30)+bold.getHeight()+max(10,ch/45);}
+        private int serverGap(){return large?10:5;}
+        private int serverRowH(){return max(28,min(103,(bodyBottom-serverFirstY()-2*serverGap()-6)/3));}
+        private void drawServer(Graphics g){
+            int y=headerH+max(10,ch/30);
+            txt(g,trim("Chon may chu",cw-2*pad-10,bold),DARK,pad+7,y,bold);
+            int first=serverFirstY(),h=serverRowH(),gap=serverGap();
+            String[]name={"4G / Internet","Wi-Fi cung Pi","Tuy chinh"};
+            String[]addresses={publicHost,lanHost,customHost};
+            for(int i=0;i<3;i++){
+                int ry=first+i*(h+gap),x=pad+5,w=cw-2*x;
+                panel(g,x,ry,w,h,i==serverSelection);
+                int dot=max(8,min(13,h/4));
+                fill(g,i==serverMode?GREEN_DEEP:0xB5D2C6,x+8,ry+9,dot,dot);
+                if(i==serverMode)fill(g,0xE7FFEF,x+11,ry+12,max(2,dot-6),max(2,dot-6));
+                txt(g,trim(name[i],w-dot-26,bold),i==serverSelection?DARK:TEXT,x+dot+14,ry+max(5,(h-(small.getHeight()+bold.getHeight()+8))/2),bold);
+                String line=addresses[i];
+                txt(g,trim(line,w-15,small),MUTED,x+9,ry+h-small.getHeight()-7,small);
+                if(w>210)txt(g,"Sua",SKY,x+w-small.stringWidth("Sua")-12,ry+10,small);
+                if(i==serverMode&&w>275)txt(g,"ON",GREEN_DEEP,x+w-small.stringWidth("Sua")-small.stringWidth("ON")-22,ry+10,small);
+            }
+            int bottom=first+3*h+2*gap+max(3,large?8:4);
+            if(bottom+small.getHeight()<bodyBottom)
+                txt(g,trim("OK: ket noi | #: sua URL | 5: kiem tra",cw-2*pad-12,small),DARK,pad+6,bottom,small);
+            if(bottom+2*small.getHeight()+4<bodyBottom)
+                txt(g,trim("HTTP chi trong LAN; ngoai mang dung HTTPS",cw-2*pad-12,small),MUTED,pad+6,bottom+small.getHeight()+3,small);
         }
         private String clock(){
             java.util.Calendar c=java.util.Calendar.getInstance();int h=c.get(java.util.Calendar.HOUR_OF_DAY),m=c.get(java.util.Calendar.MINUTE);
@@ -165,32 +332,34 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         }
         private int navIndex(int i){return (tab==1&&i==0)||(tab==2&&i==1)||(tab==3&&i==2)||(tab==4&&i==3)?1:0;}
         private void topNav(Graphics g){
-            fill(g,0xD9E7FC,0,headerH,cw,navH);
+            fill(g,0xD9F3E8,0,headerH,cw,navH);
             String[]full={"Trang chu","Ho so","Ban be","Chat"};
             String[]shortNames={"Chu","Ho so","Ban be","Chat"};
             for(int i=0;i<4;i++){
                 int cols=narrow?2:4,rows=narrow?2:1,cellW=cw/cols,cellH=navH/rows;
                 int x=i%cols*cellW, y=headerH+i/cols*cellH;
                 boolean active=navIndex(i)==1;
-                if(active)fill(g,DARK,x+1,y+1,cellW-2,cellH-2);
+                boolean focus=navFocus&&navSelection==i;
+                if(active||focus)fill(g,focus?SKY:DARK,x+1,y+1,cellW-2,cellH-2);
                 String s=narrow?shortNames[i]:full[i];
                 int dx=x+max(3,(cellW-small.stringWidth(s))/2);
-                txt(g,s,active?0xFFFFFF:DARK,dx,y+max(1,(cellH-small.getHeight())/2),small);
+                txt(g,s,active||focus?0xFFFFFF:DARK,dx,y+max(1,(cellH-small.getHeight())/2),small);
             }
         }
         private void panel(Graphics g,int x,int y,int w,int h,boolean active){
             if(w<=0||h<=0)return;
-            fill(g,active?0xDEEAFD:0xFFFFFF,x,y,w,h);
-            g.setColor(active?BLUE:0xB3C4E0);g.drawRect(x,y,w-1,h-1);
+            fill(g,active?0xD9F7EA:0xFFFFFF,x,y,w,h);
+            g.setColor(active?GREEN: BORDER);g.drawRect(x,y,w-1,h-1);
+            if(active&&w>5&&h>5){g.setColor(GREEN);g.drawRect(x+2,y+2,w-5,h-5);}
         }
         private void headerHint(Graphics g,String s,int y){
-            txt(g,trim(s,cw-2*pad-10,small),0x53637A,pad+5,y,small);
+            txt(g,trim(s,cw-2*pad-10,small),MUTED,pad+5,y,small);
         }
         private void drawFeed(Graphics g){
             int y=bodyTop+1,h=large?43:33;
             panel(g,pad,y,cw-2*pad,h,false);
             String text=narrow?"2: Bai viet   8: Anh":"2: Dang bai    8: Chon anh";
-            txt(g,trim(text,cw-2*pad-15,normal),0x53637A,pad+8,y+max(3,(h-normal.getHeight())/2),normal);
+            txt(g,trim(text,cw-2*pad-15,normal),MUTED,pad+8,y+max(3,(h-normal.getHeight())/2),normal);
             drawPosts(g,y+h+5,feed);
         }
         private int visible(int y,int height){return max(1,(bodyBottom-y)/max(1,height));}
@@ -210,12 +379,12 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 String[]a=(String[])items.elementAt(i);
                 panel(g,pad,ry,cw-2*pad,cardH,i==selection);
                 int avatar=large?45:29;
-                fill(g,0xA7C8EF,pad+6,ry+6,avatar,avatar);
+                fill(g,0x61CBA4,pad+6,ry+6,avatar,avatar);
                 txt(g,"@",0xFFFFFF,pad+6+avatar/4,ry+6+avatar/4,bold);
                 int textX=pad+avatar+13;
                 int nameY=ry+5;
                 txt(g,trim(piece(a,2),cw-textX-pad-4,bold),DARK,textX,nameY,bold);
-                txt(g,trim(piece(a,3).replace('T',' '),cw-textX-pad-4,small),0x687A91,textX,nameY+bold.getHeight()+2,small);
+                txt(g,trim(piece(a,3).replace('T',' '),cw-textX-pad-4,small),MUTED,textX,nameY+bold.getHeight()+2,small);
                 int contentY=ry+avatar+12;
                 int actionY=ry+cardH-small.getHeight()-5;
                 int lines=max(1,(actionY-contentY-1)/max(1,normal.getHeight()));
@@ -234,11 +403,11 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             int y=bodyTop+2,ph=profileHeaderHeight();
             panel(g,pad,y,cw-2*pad,ph,false);
             int avatar=large?73:(narrow?52:45);
-            fill(g,0xA2C3ED,pad+8,y+8,avatar,avatar);
+            fill(g,0x61CBA4,pad+8,y+8,avatar,avatar);
             txt(g,"@",0xFFFFFF,pad+8+avatar/3,y+8+avatar/3,bold);
             int tx=pad+avatar+16;
             txt(g,trim(profileName,cw-tx-pad-7,bold),DARK,tx,y+10,bold);
-            txt(g,trim("@"+profileHandle,cw-tx-pad-7,small),0x60728A,tx,y+12+bold.getHeight(),small);
+            txt(g,trim("@"+profileHandle,cw-tx-pad-7,small),MUTED,tx,y+12+bold.getHeight(),small);
             int bioY=y+avatar+15;
             wrapped(g,profileBio,TEXT,pad+8,bioY,cw-2*pad-16,small,large?2:1);
             headerHint(g,profileNeedsPaging()?"5: Bai viet | 6: Ten | 7: Gioi thieu":"6: Sua ten  |  7: Sua gioi thieu",y+ph-small.getHeight()-6);
@@ -253,7 +422,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 int ry=y+(i-first)*(rowH+gap);if(ry+rowH>bodyBottom)break;
                 String[]f=(String[])friends.elementAt(i);panel(g,pad,ry,cw-2*pad,rowH,i==selection);
                 txt(g,trim(piece(f,1),cw-2*pad-90,bold),TEXT,pad+8,ry+5,bold);
-                txt(g,trim("@"+piece(f,2),cw-2*pad-90,small),0x76869C,pad+8,ry+7+bold.getHeight(),small);
+                txt(g,trim("@"+piece(f,2),cw-2*pad-90,small),MUTED,pad+8,ry+7+bold.getHeight(),small);
                 String label="Chat >";txt(g,label,BLUE,cw-pad-small.stringWidth(label)-7,ry+max(6,(rowH-small.getHeight())/2),small);
             }
             if(friends.size()==0)headerHint(g,"Chua co ban be",y+8);
@@ -296,7 +465,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 int ry=y+(i-first)*(height+gap);if(ry+height>bodyBottom)break;
                 String[]a=(String[])incoming.elementAt(i);panel(g,pad,ry,cw-2*pad,height,i==selection);
                 txt(g,trim(piece(a,1),cw-2*pad-15,bold),DARK,pad+8,ry+5,bold);
-                txt(g,trim("@"+piece(a,2),cw-2*pad-15,small),0x687A91,pad+8,ry+8+bold.getHeight(),small);
+                txt(g,trim("@"+piece(a,2),cw-2*pad-15,small),MUTED,pad+8,ry+8+bold.getHeight(),small);
             }
             if(incoming.size()==0)headerHint(g,"Khong co loi moi",y+8);
         }
@@ -357,6 +526,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             }});
         }
         private void back(){
+            if(tab==8){tab=token.length()==0?0:1;screen.repaint();return;}
             if(tab==5){tab=4;reload();}
             else if(tab==6){tab=1;reload();}
             else if(tab==7){tab=3;reload();}
@@ -368,13 +538,59 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             if(tab==3)return friends.size();if(tab==6)return comments.size();
             if(tab==7)return incoming.size();return 0;
         }
+        private void chooseWelcome(){
+            if(welcomeSelection==0)auth(false);
+            else if(welcomeSelection==1)auth(true);
+            else {serverSelection=serverMode;tab=8;repaint();}
+        }
+        private void chooseNav(int index){
+            if(index==0)navigate(1);
+            else if(index==1){profileId=me;navigate(2);}
+            else if(index==2)navigate(3);
+            else if(index==3){if(peer.length()>0)navigate(4);else notification="Chon ban be truoc";}
+        }
         protected void keyPressed(int k){
             if(busy)return;
             int action=0;try{action=getGameAction(k);}catch(Exception ignored){}
-            if(token.length()==0){if(k=='1')auth(false);else if(k=='2')auth(true);repaint();return;}
+            // Tested game-action constants are used instead of raw arrow key codes.
+            if(tab==8){
+                if(k==-7||k=='0'){back();return;}
+                if(action==Canvas.UP){serverSelection=(serverSelection+2)%3;repaint();return;}
+                if(action==Canvas.DOWN){serverSelection=(serverSelection+1)%3;repaint();return;}
+                if(action==Canvas.LEFT){serverSelection=(serverSelection+2)%3;repaint();return;}
+                if(action==Canvas.RIGHT){serverSelection=(serverSelection+1)%3;repaint();return;}
+                if(k=='1'||k=='2'||k=='3'){serverSelection=k-'1';repaint();return;}
+                if(k=='#'||k==-6){serverEditor();return;}
+                if(k=='5'){pingServer();return;}
+                if(action==Canvas.FIRE){setServer(serverSelection);return;}
+                return;
+            }
+            if(token.length()==0){
+                if(action==Canvas.UP){welcomeSelection=(welcomeSelection+2)%3;repaint();return;}
+                if(action==Canvas.DOWN){welcomeSelection=(welcomeSelection+1)%3;repaint();return;}
+                if(action==Canvas.LEFT){welcomeSelection=(welcomeSelection+2)%3;repaint();return;}
+                if(action==Canvas.RIGHT){welcomeSelection=(welcomeSelection+1)%3;repaint();return;}
+                if(k=='1')auth(false);else if(k=='2')auth(true);
+                else if(k=='3'||k=='0'){tab=8;serverSelection=serverMode;repaint();}
+                else if(action==Canvas.FIRE||k==-6)chooseWelcome();
+                return;
+            }
+            if(k=='0'&&tab==1){tab=8;serverSelection=serverMode;repaint();return;}
             if(k==-7||k=='0'){back();repaint();return;}
-            if(tab!=5){if(k=='1'){navigate(1);return;}if(k=='3'){profileId=me;navigate(2);return;}if(k=='4'){navigate(3);return;}if(k=='9'){reload();return;}}
             if(k=='#'){logout();return;}
+            if(tab!=5){
+                if(action==Canvas.LEFT||action==Canvas.RIGHT){
+                    if(!navFocus){navFocus=true;navSelection=tab==2?1:tab==3?2:tab==4?3:0;}
+                    navSelection=(navSelection+(action==Canvas.RIGHT?1:3))%4;
+                    repaint();return;
+                }
+                if(navFocus&&action==Canvas.FIRE){chooseNav(navSelection);repaint();return;}
+                if(action==Canvas.UP||action==Canvas.DOWN)navFocus=false;
+                if(k=='1'){navigate(1);return;}
+                if(k=='3'){profileId=me;navigate(2);return;}
+                if(k=='4'){navigate(3);return;}
+                if(k=='9'){reload();return;}
+            }
             if(action==Canvas.UP){selection=max(0,selection-1);repaint();return;}
             if(action==Canvas.DOWN){selection=min(max(0,listSize()-1),selection+1);repaint();return;}
             if(tab==1){
@@ -402,18 +618,29 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         protected void pointerPressed(int x,int y){
             if(busy)return;
             layout();
+            if(y>=0&&y<headerH){tab=8;serverSelection=serverMode;repaint();return;}
+            if(tab==8){
+                int first=serverFirstY(),stride=serverRowH()+serverGap();
+                int idx=(y-first)/max(1,stride);
+                if(y>=first&&idx>=0&&idx<3){
+                    serverSelection=idx;
+                    if(x>cw*3/4&&cw>210)serverEditor();
+                    else setServer(idx);
+                }
+                else if(y>=ch-footerH){back();}
+                return;
+            }
             if(token.length()==0){
-                int cy=headerH+max(14,ch/13)+bold.getHeight()+max(20,ch/18);
-                if(y>=cy&&y<cy+max(35,normal.getHeight()+14))auth(false);
-                else if(y>=cy+max(48,normal.getHeight()+27)&&y<cy+max(48,normal.getHeight()+27)+max(35,normal.getHeight()+14))auth(true);
+                int first=welcomeFirstY(),stride=welcomeRowH()+welcomeGap();
+                int idx=(y-first)/max(1,stride);
+                if(y>=first&&idx>=0&&idx<3){welcomeSelection=idx;chooseWelcome();}
                 return;
             }
             if(y>=ch-footerH){if(x>=cw/2)back();repaint();return;}
             if(tab!=5&&y>=headerH&&y<headerH+navH){
                 int cols=narrow?2:4,cellW=cw/cols,cellH=navH/(narrow?2:1);
                 int i=(y-headerH)/max(1,cellH)*cols+x/max(1,cellW);
-                if(i==0)navigate(1);else if(i==1){profileId=me;navigate(2);}
-                else if(i==2)navigate(3);else if(i==3){if(peer.length()>0)navigate(4);else notification="Chon ban be de chat";}
+                if(i>=0&&i<4)chooseNav(i);
                 repaint();return;
             }
             if(tab==1){

@@ -1,11 +1,11 @@
-# MiniSocial 1.1.0 — Responsive Java ME + Xubi + Supabase
+# MiniSocial 1.2.0 — Green/Teal UI + Server Selection + Xubi + Supabase
 
 Standalone MVP, created from four supplied Nokia-style mockups (feed, user profile, chat and photo viewer).
 The interface is **code-rendered**, not a screenshot, so it can respond to the E72 keyboard and a responsive Canvas.
 
-**IMPORTANT TEST LIMITATION:** The Java ME client has been compiled, converted to CLDC 1.1 class version 45.3, and structurally checked using OpenJDK's verifier. The build includes converted CLDC `StackMap` attributes. The v1.1 layout has been exercised with a desktop-only Canvas geometry smoke test for all four target sizes (not a Java ME emulator). **It has NOT been installed on a real Nokia E72 or run against a real Supabase project.** Nokia Java ME HTTPS certificate/TLS support may require additional work. Do not claim E72 installation or end-to-end operation is already confirmed.
+**IMPORTANT TEST LIMITATION:** The Java ME client has been compiled, converted to CLDC 1.1 class version 45.3, and structurally checked using OpenJDK's verifier. The build includes converted CLDC `StackMap` attributes. The v1.2 layout has been exercised with a desktop-only Canvas geometry smoke test for all four target sizes (not a Java ME emulator). **It has NOT been installed on a real Nokia E72 or run against a real Supabase project.** Nokia Java ME HTTPS certificate/TLS support may require additional work. Do not claim E72 installation or end-to-end operation is already confirmed.
 
-## Responsive screen support (v1.1.0)
+## Responsive screen support (v1.2.0)
 
 The same JAR reads `Canvas.getWidth()` and `Canvas.getHeight()` on every paint and when its size changes. It automatically lays out these four target screen sizes: **240×320 portrait, 320×240 landscape, 360×640 portrait, and 640×480 landscape**. Other screen sizes receive a best-effort flexible layout. The 240-pixel-wide portrait screen uses a 2×2 navigation grid; wider screens use a single row. Lists scroll by Up/Down using a selection-based window rather than only drawing the first items. Touch-capable MIDP devices can tap navigation and rows; keypad actions remain the primary controls.
 
@@ -90,10 +90,22 @@ When `minisocial.xubi.org` and Caddy are active, download the client using:
 
 Copy both to the phone through USB/Bluetooth/memory card if the old Nokia browser does not negotiate modern HTTPS.
 
+## MiniSocial 1.2.0 — Green/teal and server choice
+
+- Canvas UI now uses dark forest green and sea-teal highlights on white/mint surfaces with stronger selection outlines; still entirely code-rendered (no extra PNG memory).
+- Welcome screen has 3 selectable cards: **Login**, **Register**, **Server**. Use **Up/Down + OK/Enter**, or 1/2/3 directly. Touch works for each card.
+- Server screen: **4G/Internet** (`https://minisocial.xubi.org`), **Wi-Fi/LAN** (`http://192.168.1.127:18087`), **Custom** (user-editable). All three URL values and the active choice are saved in RMS. No Supabase secret is stored here.
+- Server screen: **Up/Down to choose**, **OK/Enter to activate**, **# or left softkey to edit URL**, **5 to test `/health`**, **0 or right softkey to go back**. On touch screens, tap a row to activate or the **Sua** area at its right to edit it.
+- From the logged-in home feed press **0** to change server, or tap the green app header from any screen. **Changing the active server invalidates the old login session** to prevent using its token on a different endpoint.
+- After login, **Left/Right moves focus across the four top tabs**; OK selects the focused tab. Up/Down resumes scrolling, OK selects items.
+- HTTP is restricted to numeric RFC1918 LAN addresses/localhost; external domains require HTTPS. This is an HTTP/HTTPS application, **not a raw `socket://` Gunny client**.
+- The original backend API, database and Docker ports are unchanged; rebuild/redeploy only to publish the new JAR/JAD on the existing download website.
+- **Warning:** Nokia E72/E6 Java TLS/certificate support requires device testing. A successful `/health` check does not prove login or Supabase integration.
+
 ## Nokia E72 controls
 
-- First screen: **1** login, **2** create account.
-- From app: **1** feed, **3** profile, **4** friends, **9** refresh, **#** logout. **Up/Down** scroll list selection; **5** toggles Info/Posts on short landscape profile screens.
+- First screen: **Up/Down + OK** choose login, register, server; shortcuts **1/2/3**.
+- From app: **1** feed, **3** profile, **4** friends, **9** refresh, **#** logout, **0 on home feed** server settings. **Up/Down** scroll list selection; **5** toggles Info/Posts on short landscape profile screens.
 - Feed: **2** create post, **8** enter photo path, **Up/Down** select post, **OK/Enter** comments, **\*** like/unlike, **5** open post picture.
 - Profile: **6** update display name; **7** update bio.
 - Friends: **6** request friend by handle, **7** incoming requests, **OK/Enter** enter chat.

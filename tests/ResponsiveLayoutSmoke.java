@@ -31,7 +31,7 @@ public class ResponsiveLayoutSmoke {
             field(app,"messages",data(18,new String[]{"msg-1","uid-peer","Chao ban! Nokia Java ME", ""}));
             field(app,"peerName","Nokia Fan");
             Object canvas=c.newInstance(app);
-            for(int t=0;t<=7;t++){
+            for(int t=0;t<=8;t++){
                 tab.setInt(app,t);field(app,"token",t==0?"":"TEST_TOKEN");
                 for(int sel:new int[]{0,6,11}){
                     selection.setInt(app,sel);
