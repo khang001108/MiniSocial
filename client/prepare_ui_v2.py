@@ -42,6 +42,7 @@ for p,(icon,logo,avatar,cover,empty) in profiles.items():
         for group,name in [('messenger','chat_empty'),('social_feed','empty_feed'),('profile','empty_friends'),('notifications','empty_notifications')]:
             emit(base/'v2'/group/theme/(name+'.png'),dst/theme/(name+'.png'),empty)
         emit(base/'v2'/'profile'/theme/'cover_banner.png',dst/theme/'cover.png',cover,crop=True)
+        emit(base/'v2'/'profile'/theme/'cover_banner.png',dst/theme/'cover_portrait.png',{'e72':(226,30),'wide':(336,44),'e6':(450,50)}[p],crop=True)
         emit(base/'v2'/'settings'/theme/'toggle_on.png',dst/theme/'toggle_on.png',(36 if p=='e72' else 50,20 if p=='e72' else 27))
         emit(base/'v2'/'settings'/theme/'toggle_off.png',dst/theme/'toggle_off.png',(36 if p=='e72' else 50,20 if p=='e72' else 27))
         emit(base/'v2'/'system'/theme/'spinner_00.png',dst/theme/'spinner.png',(16 if p=='e72' else 22,16 if p=='e72' else 22))

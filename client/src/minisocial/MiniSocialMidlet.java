@@ -559,14 +559,19 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         private Image photo;
         private String loadedPhoto="";
         private int cw,ch,pad,headerH,navH,footerH,bodyTop,bodyBottom,cardH,rowH;
-        private boolean portrait,narrow,large,profilePostsMode=false;
+        private boolean portrait,narrow,large,compactLandscape,profilePostsMode=false;
         // Lazy image cache: a small working set only; never decode the full v2 pack.
         private Hashtable uiCache=new Hashtable();
         private Vector uiRecent=new Vector();
         private String deviceAssets="";
+        /** Resolution tier is based on the shorter side, never orientation alone.
+         * 240x320 / 320x240: e72; 360x640 / 640x360: wide;
+         * 480x640 / 640x480: e6. The same icons work after a rotation.
+         */
         private String uiDevice(){
-            if(cw>=600&&ch>=420)return "e6";
-            if(cw>=600&&ch>=320)return "wide";
+            int shorter=min(cw,ch);
+            if(shorter>=440)return "e6";
+            if(shorter>=340)return "wide";
             return "e72";
         }
         private String uiTheme(){return themeDark?"dark":"light";}
@@ -629,22 +634,52 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         }
 
         SocialCanvas(){setFullScreenMode(true);layout();}
-        private void layout(){
-            cw=Math.max(1,getWidth());ch=Math.max(1,getHeight());
-            portrait=ch>cw;narrow=cw<280;large=(cw>=480||ch>=480);
-            pad=large?(cw>=480?12:9):5;
-            headerH=large?(cw>=480?56:47):34;
-            navH=large?43:30;
-            footerH=large?38:24;
-            bodyTop=headerH+navH+4;bodyBottom=ch-footerH-3;
+        private void layout(){layout(getWidth(),getHeight());}
+        private void layout(int width,int height){
+            cw=max(1,width);ch=max(1,height);
+            int shorter=min(cw,ch);
+            portrait=ch>cw;
+            narrow=cw<280;
+            large=shorter>=340;
+            compactLandscape=!portrait&&ch<=400;
+            pad=shorter>=440?12:large?9:5;
+            headerH=large?(compactLandscape?42:shorter>=440?56:47):34;
+            navH=large?(compactLandscape?34:43):30;
+            footerH=large?(compactLandscape?28:38):24;
+            bodyTop=headerH+navH+4;
+            bodyBottom=max(bodyTop+1,ch-footerH-3);
             small=Font.getFont(Font.FACE_SYSTEM,Font.STYLE_PLAIN,large?Font.SIZE_MEDIUM:Font.SIZE_SMALL);
             normal=Font.getFont(Font.FACE_SYSTEM,Font.STYLE_PLAIN,large?Font.SIZE_LARGE:Font.SIZE_MEDIUM);
             bold=Font.getFont(Font.FACE_SYSTEM,Font.STYLE_BOLD,large?Font.SIZE_LARGE:Font.SIZE_MEDIUM);
             title=Font.getFont(Font.FACE_SYSTEM,Font.STYLE_BOLD,large?Font.SIZE_LARGE:Font.SIZE_MEDIUM);
-            cardH=large?(portrait?115:112):(portrait?95:84);
-            rowH=large?65:(portrait?48:40);
+            cardH=large?(compactLandscape?88:portrait?115:112):(portrait?95:84);
+            rowH=large?(compactLandscape?50:65):(portrait?48:40);
         }
-        protected void sizeChanged(int w,int h){layout();repaint();}
+        /** MIDP emits this when the phone or emulator changes orientation.
+         * Preserve the selected tab, item and in-progress conversation.
+         */
+        protected void sizeChanged(int w,int h){
+            layout(w,h);
+            fitLoadedPhoto();
+            repaint();
+        }
+        private void fitLoadedPhoto(){
+            if(photo==null)return;
+            int limitW=max(1,cw-2*pad-12),limitH=max(1,ch-headerH-footerH-2*pad-12);
+            int w=photo.getWidth(),h=photo.getHeight();
+            if(w<=limitW&&h<=limitH)return;
+            if(w<=0||h<=0||((long)w)*h>1200000L){photo=null;loadedPhoto="";return;}
+            int dw,dh;
+            if(((long)w)*limitH>((long)h)*limitW){dw=limitW;dh=max(1,(int)(((long)h)*dw/w));}
+            else{dh=limitH;dw=max(1,(int)(((long)w)*dh/h));}
+            try{
+                int[]src=new int[w*h],dst=new int[dw*dh];
+                photo.getRGB(src,0,w,0,0,w,h);
+                for(int y=0;y<dh;y++)for(int x=0;x<dw;x++)
+                    dst[y*dw+x]=src[(int)(((long)y)*h/dh)*w+(int)(((long)x)*w/dw)];
+                photo=Image.createRGBImage(dst,dw,dh,false);
+            }catch(OutOfMemoryError ignored){photo=null;loadedPhoto="";}
+        }
         private int min(int a,int b){return a<b?a:b;}
         private int max(int a,int b){return a>b?a:b;}
         private void fill(Graphics g,int color,int x,int y,int w,int h){if(w<=0||h<=0)return;g.setColor(color);g.fillRect(x,y,w,h);}
@@ -1221,8 +1256,8 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             }
             int y=bodyTop+2,ph=profileHeaderHeight();
             panel(g,pad,y,cw-2*pad,ph,false);
-            drawAsset(g,uiTheme()+"/cover.png",pad,y+1);
-            int avatar=large?73:(narrow?52:45);
+            drawAsset(g,uiTheme()+(portrait?"/cover_portrait.png":"/cover.png"),pad,y+1);
+            int avatar=large?(portrait?60:73):45;
             int ax=pad+8, ay=y+(large?23:14);
             if(profileAvatarImage!=null&&avatarMediaId.equals(profileAvatarLoaded))
                 g.drawImage(profileAvatarImage,ax,ay,Graphics.TOP|Graphics.LEFT);
@@ -1255,6 +1290,27 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             if(friends.size()==0)emptyIcon(g,"empty_friends",y+5,"Chưa có bạn bè. Nhấn 6 để kết bạn.");
         }
         private int chatListY(){return bodyTop+(large?63:51);}
+        private int chatInputHeight(){return compactLandscape?33:large?42:29;}
+        /** Returns text lines needed for chat bubbles, capped for a tiny viewport. */
+        private int wrappedLines(String s,int maxWidth,Font f,int limit){
+            if(s==null||s.length()==0)return 1;
+            int pos=0,count=0;
+            while(pos<s.length()&&count<limit){
+                int end=pos,last=-1;
+                while(end<s.length()){
+                    char c=s.charAt(end);if(c=='\n')break;
+                    if(f.stringWidth(s.substring(pos,end+1))>maxWidth)break;
+                    if(c==' ')last=end;
+                    end++;
+                }
+                if(end==pos)end=min(s.length(),pos+1);
+                else if(end<s.length()&&s.charAt(end)!='\n'&&last>pos)end=last+1;
+                pos=end;
+                while(pos<s.length()&&(s.charAt(pos)==' '||s.charAt(pos)=='\n'))pos++;
+                count++;
+            }
+            return max(1,count);
+        }
         private void drawChat(Graphics g){
             if(peer.length()==0){
                 headerHint(g,"Chọn bạn bè để bắt đầu chat",bodyTop+6);
@@ -1275,39 +1331,51 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             panel(g,pad,headerTop,cw-2*pad,peerH,false);
             uiIcon(g,"chats",pad+6,headerTop+max(2,(peerH-(large?23:16))/2),themeDark);
             txt(g,trim(peerName,cw-2*pad-74,bold),DARK,pad+(large?40:28),headerTop+max(2,(peerH-bold.getHeight())/2),bold);
-            int inputH=large?42:29;
+            int inputH=chatInputHeight();
             int inputY=bodyBottom-inputH;
             panel(g,pad,inputY,cw-2*pad,inputH-2,false);
-            uiIcon(g,"attach",pad+6,inputY+max(1,(inputH-(large?23:16))/2),themeDark);
+            int iconSize=large?23:16;
+            uiIcon(g,"attach",pad+6,inputY+max(1,(inputH-iconSize)/2),themeDark);
             txt(g,trim("2: Soạn tin   8: Ảnh",cw-2*pad-(large?100:67),small),MUTED,pad+(large?39:27),inputY+max(3,(inputH-small.getHeight())/2),small);
-            uiIcon(g,"send",cw-pad-(large?33:23),inputY+max(1,(inputH-(large?23:16))/2),themeDark);
-            int y=headerTop+peerH+4,bottom=inputY-3;
-            int bubbleH=large?61:40,gap=large?6:3;
-            int count=max(1,(bottom-y)/(bubbleH+gap));
-            int first=max(0,messages.size()-count);
-            for(int i=first;i<messages.size();i++){
-                int ry=y+(i-first)*(bubbleH+gap);if(ry+bubbleH>bottom)break;
-                String[]m=(String[])messages.elementAt(i);boolean mine=piece(m,1).equals(me);
-                int space=large?75:34;
-                int x=mine?pad+space:pad;
-                int width=cw-2*pad-space;
-                g.setColor(mine?(themeDark?0x164474:0xD1E8FF):(themeDark?0x24344B:0xFFFFFF));
-                g.fillRoundRect(x,ry,width,bubbleH,large?18:12,large?18:12);
-                g.setColor(mine?BLUE:BORDER);
-                g.drawRoundRect(x,ry,width-1,bubbleH-1,large?18:12,large?18:12);
+            uiIcon(g,"send",cw-pad-(large?33:23),inputY+max(1,(inputH-iconSize)/2),themeDark);
+            // A dynamic message viewport: bubbles hug their content, stay within
+            // the active width, and accumulate bottom-up as messaging apps do.
+            int top=headerTop+peerH+4,bottom=inputY-3;
+            int gap=compactLandscape?4:large?6:3;
+            int maxWidth=max(90,min(cw-2*pad-(large?45:25),portrait?cw-2*pad-34:(cw*3)/4));
+            int minWidth=min(maxWidth,large?112:85);
+            int cursor=bottom;
+            for(int i=messages.size()-1;i>=0;i--){
+                String[]m=(String[])messages.elementAt(i);
+                boolean mine=piece(m,1).equals(me);
                 String value=piece(m,3).length()>0?"[Ảnh] "+piece(m,2):piece(m,2);
-                wrapped(g,value,TEXT,x+7,ry+4,width-14,normal,max(1,(bubbleH-small.getHeight()-12)/max(1,normal.getHeight())));
-                // /m/chat currently sends created_at at index 4 and device at 5.
-                // Read receipts are deliberately hidden unless an actual status is supplied.
                 String time=piece(m,4);
                 if(time.length()>=16&&time.charAt(10)=='T')time=time.substring(11,16);
                 else if(time.length()>5)time=time.substring(max(0,time.length()-5));
-                txt(g,trim(time,width-25,small),MUTED,x+7,ry+bubbleH-small.getHeight()-4,small);
+                int ideal=normal.stringWidth(value)+24;
+                int width=max(minWidth,min(maxWidth,ideal));
+                int textWidth=max(1,width-14);
+                int availableHeight=max(1,bottom-top);
+                int maxLines=max(1,(availableHeight-small.getHeight()-17)/max(1,normal.getHeight()+1));
+                int lines=wrappedLines(value,textWidth,normal,min(large?5:4,maxLines));
+                int bubbleH=max(compactLandscape?45:large?52:39,
+                    10+lines*(normal.getHeight()+1)+small.getHeight()+7);
+                cursor-=bubbleH;
+                if(cursor<top)break;
+                int x=mine?cw-pad-width:pad;
+                g.setColor(mine?(themeDark?0x164474:0xD1E8FF):(themeDark?0x24344B:0xFFFFFF));
+                g.fillRoundRect(x,cursor,width,bubbleH,large?18:12,large?18:12);
+                g.setColor(mine?BLUE:BORDER);
+                g.drawRoundRect(x,cursor,width-1,bubbleH-1,large?18:12,large?18:12);
+                wrapped(g,value,TEXT,x+7,cursor+4,textWidth,normal,lines);
+                txt(g,trim(time,width-28,small),MUTED,x+7,cursor+bubbleH-small.getHeight()-4,small);
+                // Do not fabricate delivery/read status: use server field only.
                 String readStatus=piece(m,6);
                 if(mine&&(readStatus.equals("read")||readStatus.equals("seen")))
-                    drawAsset(g,uiTheme()+"/read_double.png",x+width-(large?30:23),ry+bubbleH-(large?19:15));
+                    drawAsset(g,uiTheme()+"/read_double.png",x+width-(large?30:23),cursor+bubbleH-(large?19:15));
+                cursor-=gap;
             }
-            if(messages.size()==0)headerHint(g,"Chưa có tin nhắn. Nhấn 2 để soạn.",y+8);
+            if(messages.size()==0)headerHint(g,"Chưa có tin nhắn. Nhấn 2 để soạn.",top+8);
         }
         private int commentsListY(){return bodyTop+(large?45:32);}
         private void drawComments(Graphics g){
@@ -1724,7 +1792,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 if(y<firstY){if(y>bodyTop+small.getHeight()+6)navigate(7);else edit("friend","Them ban theo @handle",TextField.ANY);return;}
                 int i=first+(y-firstY)/(rowH+(large?5:3));if(i>=0&&i<friends.size()){selection=i;selectFriend();}
             }else if(tab==4){if(peer.length()==0){int start=bodyTop+small.getHeight()+15;int h=large?57:38;int i=(y-start)/(h+3);if(y>=start&&i>=0&&i<friends.size()){selection=i;openSelectedChat();}}
-                else if(y>=bodyBottom-(large?42:29)){
+                else if(y>=bodyBottom-chatInputHeight()){
                     if(x<pad+(large?39:27))edit("photo-chat","file:///E:/Images/anh.jpg",TextField.ANY);
                     else edit("chat","Nhập tin nhắn",TextField.ANY);
                 }else if(y<chatListY())edit("chat","Nhập tin nhắn",TextField.ANY);}

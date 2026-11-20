@@ -1,3 +1,12 @@
+## MiniSocial v1.8.2 — Giao diện tự co giãn và xoay dọc/ngang
+
+- Hỗ trợ 240×320, 320×240, 360×640, 640×360, 480×640 và 640×480 (và độ phân giải tương tự).
+- Tự đo `Canvas.getWidth()` và `getHeight()` mỗi lần vẽ, xử lý `sizeChanged(w,h)` khi hệ điều hành đổi hướng màn hình; không cần chọn độ phân giải trong Settings.
+- Asset PNG chọn theo **cạnh ngắn**: E72 / Wide / E6; thêm ảnh bìa crop phù hợp màn dọc và giữ bộ nhớ cache nhỏ.
+- Bong bóng chat tự co theo chữ / chiều rộng, hiển thị tin mới nhất từ dưới lên; ô soạn và hitbox cảm ứng dùng chung kích thước thực.
+- Giữ nguyên API, backend và các phím Nokia. Đọc [HUONG-DAN-CAP-NHAT-v1.8.2-RESPONSIVE.md](HUONG-DAN-CAP-NHAT-v1.8.2-RESPONSIVE.md).
+- Thay đổi hướng màn hình chỉ diễn ra nếu điện thoại/hệ điều hành hỗ trợ và báo `sizeChanged`; ứng dụng không tự ép xoay màn hình trên Nokia E72.
+
 ## MiniSocial v1.8.1 — Messenger Blue UI Assets v2.0
 
 Bản nâng cấp giao diện trực tiếp từ v1.8.0; **có 640×360**, bên cạnh E72 320×240 và E6 640×480, với icon/PNG thực trong JAR. Xem [HUONG-DAN-CAP-NHAT-v1.8.1-UI-v2.md](HUONG-DAN-CAP-NHAT-v1.8.1-UI-v2.md). Backend, endpoint, schema Supabase không đổi.
