@@ -1,14 +1,15 @@
 services:
   minisocial:
     build:
-      context: ../server
-    image: minisocial-server:1.1.0
+      context: ..
+      dockerfile: server/Dockerfile
+    image: minisocial-server:1.7.0
     container_name: minisocial
     restart: unless-stopped
     env_file:
       - .env
     ports:
-      - "127.0.0.1:8087:8080"
+      - "127.0.0.1:18087:8080"
     security_opt:
       - no-new-privileges:true
     read_only: true

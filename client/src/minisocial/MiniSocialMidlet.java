@@ -6,6 +6,7 @@ import javax.microedition.io.*;
 import javax.microedition.rms.*;
 import java.io.*;
 import java.util.Vector;
+import java.util.Hashtable;
 
 /** Responsive MiniSocial for 240x320, 320x240, 360x640 and 640x480, CLDC 1.1 / MIDP 2.0. */
 public final class MiniSocialMidlet extends MIDlet implements CommandListener {
@@ -18,8 +19,16 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
     // Login form fields are held in RAM only. Password is never written to RMS.
     private String loginEmail="", loginPassword="";
     // Registration is a persistent Canvas form, not a sequence of pop-up prompts.
-    // Password and confirmation remain in RAM only and are erased on submit/exit.
-    private String[] registerFields={"","","","",""};
+    // Password remains in RAM only and is erased on submit/exit.
+    private String[] registerFields={"","",""};
+    // First-login setup: display name, detected device model, optional avatar path.
+    private String[] onboardingFields={"","",""};
+    private int onboardingSelection=0;
+    private String deviceModel="Unknown device", avatarMediaId="";
+    private boolean onboardingRequired=false;
+    private Image profileAvatarImage; private String profileAvatarLoaded="";
+    // Small avatar cache capped to four thumbnails to respect Nokia heap constraints.
+    private Hashtable avatarCache=new Hashtable();
     private int registerSelection=0;
     // Password recovery: a four-field form, no password/OTP persisted in RMS.
     private String[] recoveryFields={"","","",""}; // email, 6-digit OTP, password, confirm
@@ -32,8 +41,10 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
     private static final String[] CHANGE_LABELS={"Mật khẩu hiện tại", "Mật khẩu mới", "Nhập lại mật khẩu"};
     private String authError="";
     private int registerErrorField=-1,loginErrorField=-1;
-    private static final String[] REG_LABELS={"Tên hiển thị","Tên tài khoản","Email","Mật khẩu","Nhập lại mật khẩu"};
-    private static final String[] REG_HINTS={"Tên của bạn","a-z, 0-9, _","email@example.com","Tối thiểu 8 ký tự","Xác nhận mật khẩu"};
+    private static final String[] REG_LABELS={"Tên tài khoản","Mật khẩu","Nhập lại mật khẩu"};
+    private static final String[] REG_HINTS={"a-z, 0-9, _","Tối thiểu 8 ký tự","Xác nhận mật khẩu"};
+    private static final String[] SETUP_LABELS={"Tên hiển thị","Model điện thoại","Ảnh đại diện (đường dẫn)"};
+    private static final String[] SETUP_HINTS={"Tên bạn bè nhìn thấy","Tự nhận diện hoặc sửa tay","file:///E:/Images/avatar.jpg"};
     private int navSelection=0;
     private boolean navFocus=false;
     private String token="", me="", myName="";
@@ -47,8 +58,8 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
     public void startApp(){
         display=Display.getDisplay(this);
         String x=getAppProperty("MiniSocial-Api-Url");if(x!=null&&x.startsWith("https://"))publicHost=x;
-        readServer();readSession();screen=new SocialCanvas();display.setCurrent(screen);
-        if(token.length()>0)reload();else tab=0;
+        readServer();readSession();readDevice();screen=new SocialCanvas();display.setCurrent(screen);
+        if(token.length()>0){work(new Task(){public void run()throws Exception{afterLogin();}});}else tab=0;
     }
     public void pauseApp(){}
     public void destroyApp(boolean unconditional){}
@@ -115,7 +126,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         if(!next.equals(host)){
             // A Supabase login token from server A must never be sent to server B.
             token="";me="";myName="";loginPassword="";saveSession();
-            feed=new Vector();friends=new Vector();messages=new Vector();incoming=new Vector();
+            feed=new Vector();friends=new Vector();messages=new Vector();incoming=new Vector();avatarCache.clear();
         }
         serverMode=idx;host=next;
         if(saveServer())notification="May chu: "+(idx==0?"Internet":idx==1?"Wi-Fi/LAN":"Tuy chinh");
@@ -143,6 +154,100 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             }finally{if(in!=null)in.close();if(c!=null)c.close();}
         }});
     }
+    // Java ME exposes only an advisory platform string, not a trustworthy device identity.
+    // A user can correct it on the first-login screen; no serial/IMEI is accessed.
+    private void readDevice(){
+        String detected="";
+        try{detected=System.getProperty("microedition.platform");}catch(Exception ignored){}
+        if(detected==null)detected="";
+        String l=detected.toLowerCase();
+        if(l.indexOf("302")>=0&&l.indexOf("nokia")>=0)detected="Nokia Asha 302";
+        else if(l.indexOf("e72")>=0)detected="Nokia E72";
+        else if(l.indexOf("e6")>=0&&l.indexOf("nokia")>=0)detected="Nokia E6";
+        else if(l.indexOf("nokia")>=0)detected="Nokia "+detected.replace('\n',' ').trim();
+        if(detected.length()==0||detected.length()>64)detected="Unknown device";
+        deviceModel=cleanDevice(detected);
+        try{RecordStore r=RecordStore.openRecordStore("ms_device_v16",true);
+            if(r.getNumRecords()>0)deviceModel=cleanDevice(new String(r.getRecord(1),"UTF-8"));
+            r.closeRecordStore();}catch(Exception ignored){}
+    }
+    /** Only keep one small thumbnail in memory; avoids re-scaling on every repaint. */
+    private Image makeAvatarThumbnail(Image src,int pixels){
+        int sw=src.getWidth(),sh=src.getHeight();
+        if(sw<1||sh<1||((long)sw)*sh>262144L)throw new IllegalArgumentException("Avatar qua lon");
+        int[] input=new int[sw*sh],output=new int[pixels*pixels];
+        src.getRGB(input,0,sw,0,0,sw,sh);
+        int size=sw<sh?sw:sh,left=(sw-size)/2,top=(sh-size)/2;
+        for(int y=0;y<pixels;y++)for(int x=0;x<pixels;x++)
+            output[y*pixels+x]=input[(top+(int)(((long)y)*size/pixels))*sw+left+(int)(((long)x)*size/pixels)];
+        return Image.createRGBImage(output,pixels,pixels,false);
+    }
+    private void cacheFeedAvatars(Vector rows){
+        // At most three new thumbnails per feed refresh, no background requests from paint().
+        if(avatarCache.size()>4)avatarCache.clear();
+        int attempted=0;
+        for(int i=0;i<rows.size()&&attempted<3;i++){
+            String[] row=(String[])rows.elementAt(i);
+            String id=piece(row,9);
+            if(id.length()==0||avatarCache.containsKey(id))continue;
+            attempted++;
+            try{
+                byte[] bytes=network("/m/photo?id="+encode(id),null,null,null);
+                Image thumb=makeAvatarThumbnail(Image.createImage(bytes,0,bytes.length),screen!=null&&screen.large?45:29);
+                avatarCache.put(id,thumb);
+            }catch(Exception ignored){}
+        }
+    }
+    private static String cleanDevice(String raw){
+        StringBuffer b=new StringBuffer();
+        for(int i=0;i<raw.length()&&b.length()<64;i++){
+            char c=raw.charAt(i);
+            if(c>='a'&&c<='z'||c>='A'&&c<='Z'||c>='0'&&c<='9'||c==' '||c=='-'||c=='_'||c=='.'||c=='/')b.append(c);
+        }
+        String res=b.toString().trim();return res.length()<2?"Unknown device":res;
+    }
+    private void saveDevice(){
+        try{RecordStore r=RecordStore.openRecordStore("ms_device_v16",true);
+            byte[] data=deviceModel.getBytes("UTF-8");
+            if(r.getNumRecords()==0)r.addRecord(data,0,data.length);else r.setRecord(1,data,0,data.length);
+            r.closeRecordStore();}catch(Exception ignored){}
+    }
+    private void afterLogin()throws Exception{
+        String[] p=single("/m/onboarding",null);
+        if(p.length>1&&"0".equals(p[1])){
+            onboardingFields=new String[]{"",deviceModel,""};onboardingSelection=0;onboardingRequired=true;tab=13;
+        }else{onboardingRequired=false;tab=1;feed=listing("/m/feed");cacheFeedAvatars(feed);}
+    }
+    private void openOnboarding(){
+        onboardingRequired=false;onboardingFields=new String[]{profileName.length()>0?profileName:myName,deviceModel,""};
+        onboardingSelection=0;authError="";notification="";tab=13;screen.repaint();
+    }
+    private void editOnboardingField(int index){
+        if(index<0||index>=3)return;
+        mode="setup-field-"+index;
+        editor=new TextBox(SETUP_LABELS[index],onboardingFields[index],index==2?180:index==0?50:64,TextField.ANY);
+        editor.addCommand(save);editor.addCommand(cancel);editor.setCommandListener(this);display.setCurrent(editor);
+    }
+    private void submitOnboarding(){
+        final String name=onboardingFields[0].trim(),model=cleanDevice(onboardingFields[1]),path=onboardingFields[2].trim();
+        if(name.length()<2||name.length()>50){authError="Tên hiển thị cần 2-50 ký tự";onboardingSelection=0;screen.repaint();return;}
+        if(path.length()>0&&!path.startsWith("file:")){authError="Đường dẫn ảnh phải bắt đầu file:///";onboardingSelection=2;screen.repaint();return;}
+        authError="";
+        work(new Task(){public void run()throws Exception{
+            String avatar="";
+            if(path.length()>0){
+                byte[] raw=readFile(path);
+                String mime=path.toLowerCase().endsWith(".png")?"image/png":"image/jpeg";
+                String[] r=unpack(new String(network("/m/upload?scope=avatar",null,raw,mime),"UTF-8"));
+                if(r.length<2||!r[0].equals("OK"))throw new Exception("Không tải được ảnh đại diện");
+                avatar=r[1];
+            }
+            single("/m/onboarding","name="+encode(name)+"&avatar="+encode(avatar));
+            deviceModel=model;saveDevice();myName=name;avatarMediaId=avatar;
+            onboardingFields[2]="";authError="";onboardingRequired=false;tab=1;feed=listing("/m/feed");cacheFeedAvatars(feed);
+            notification="Đã lưu hồ sơ";
+        }});
+    }
     private void logout(){token="";me="";myName="";loginPassword="";saveSession();tab=0;welcomeSelection=0;screen.repaint();}
     private interface Task{void run()throws Exception;}
     private void work(final Task t){if(busy)return;busy=true;notification="";screen.repaint();new Thread(new Runnable(){public void run(){try{t.run();}catch(Exception e){notification=e.getMessage();}finally{busy=false;screen.repaint();}}}).start();}
@@ -156,6 +261,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             c=(HttpConnection)Connector.open(host+path,Connector.READ_WRITE,true);
             boolean isPost=data!=null||upload!=null;c.setRequestMethod(isPost?HttpConnection.POST:HttpConnection.GET);
             c.setRequestProperty("Accept","text/plain");if(token.length()>0)c.setRequestProperty("Authorization","Bearer "+token);
+            c.setRequestProperty("X-MiniSocial-Device",deviceModel);
             if(isPost){c.setRequestProperty("Content-Type",mime==null?"application/x-www-form-urlencoded; charset=UTF-8":mime);os=c.openOutputStream();byte[]payload=upload==null?data.getBytes("UTF-8"):upload;os.write(payload);os.flush();os.close();os=null;}
             int status=c.getResponseCode();in=c.openInputStream();ByteArrayOutputStream buf=new ByteArrayOutputStream();byte[]bytes=new byte[1024];int n;int max=upload==null&&mime==null&&path.startsWith("/m/photo")?210000:120000;
             while((n=in.read(bytes))!=-1){if(buf.size()+n>max)throw new Exception("Response too big");buf.write(bytes,0,n);}
@@ -166,8 +272,13 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
     private String[] single(String path,String data)throws Exception{String[]v=unpack(request(path,data).trim());if(v.length==0||!v[0].equals("OK"))throw new Exception(v.length>1?v[1]:"Bad server reply");return v;}
     private Vector listing(String path)throws Exception{String raw=request(path,null);String[]lines=split(raw,'\n');if(lines.length==0||!lines[0].startsWith("OK"))throw new Exception("Bad list");Vector out=new Vector();for(int i=1;i<lines.length;i++){if(lines[i].length()>0)out.addElement(unpack(lines[i]));}return out;}
     private void reload(){if(token.length()==0){tab=0;screen.repaint();return;}final int requested=tab;work(new Task(){public void run()throws Exception{
-        if(requested==1)feed=listing("/m/feed");
-        else if(requested==2){String[]p=single("/m/profile?user="+encode(profileId.length()==0?me:profileId),null);profileName=p[2];profileHandle=p[3];profileBio=p[4];profilePosts=listing("/m/profileposts?user="+encode(p[1]));}
+        if(requested==1){feed=listing("/m/feed");cacheFeedAvatars(feed);}
+        else if(requested==2){String[]p=single("/m/profile?user="+encode(profileId.length()==0?me:profileId),null);profileName=p[2];profileHandle=p[3];profileBio=p[4];avatarMediaId=piece(p,6);profilePosts=listing("/m/profileposts?user="+encode(p[1]));cacheFeedAvatars(profilePosts);
+            if(avatarMediaId.length()>0&&!avatarMediaId.equals(profileAvatarLoaded)){
+                try{byte[] img=network("/m/photo?id="+encode(avatarMediaId),null,null,null);
+                    profileAvatarImage=makeAvatarThumbnail(Image.createImage(img,0,img.length),screen!=null&&screen.large?73:screen!=null&&screen.narrow?52:45);profileAvatarLoaded=avatarMediaId;
+                }catch(Exception ignored){profileAvatarImage=null;profileAvatarLoaded="";}
+            }}
         else if(requested==3)friends=listing("/m/friends");
         else if(requested==4){if(peer.length()>0)messages=listing("/m/chat?user="+encode(peer));}
         else if(requested==5){}else if(requested==6)comments=listing("/m/comments?post="+encode(target));
@@ -188,8 +299,8 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         if(index<0||index>=REG_LABELS.length)return;
         registerSelection=index;
         mode="register-field-"+index;
-        int constraints=index==2?TextField.EMAILADDR:(index>=3?TextField.ANY|TextField.PASSWORD:TextField.ANY);
-        int limit=index==0?50:index==1?24:index==2?140:128;
+        int constraints=index==0?TextField.ANY:(TextField.ANY|TextField.PASSWORD);
+        int limit=index==0?24:128;
         editor=new TextBox(REG_LABELS[index],registerFields[index],limit,constraints);
         editor.addCommand(save);editor.addCommand(cancel);editor.setCommandListener(this);
         display.setCurrent(editor);
@@ -198,34 +309,35 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         registerSelection=field;registerErrorField=field;authError=reason;screen.repaint();
     }
     private void submitRegistration(){
-        String name=registerFields[0].trim(),handle=registerFields[1].trim().toLowerCase(),email=registerFields[2].trim();
-        String pass=registerFields[3],confirm=registerFields[4];
-        if(name.length()==0||name.length()>50){failRegistration(0,"Nhập tên hiển thị (1-50 ký tự)");return;}
-        if(handle.length()<3||handle.length()>24){failRegistration(1,"Tên tài khoản: 3-24 ký tự");return;}
+        String handle=registerFields[0].trim().toLowerCase(),pass=registerFields[1],confirm=registerFields[2];
+        if(handle.length()<3||handle.length()>24){failRegistration(0,"Tên tài khoản: 3-24 ký tự");return;}
         for(int i=0;i<handle.length();i++){
             char c=handle.charAt(i);
             if(!((c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='_')){
-                failRegistration(1,"Tên tài khoản: a-z, 0-9, _");return;
+                failRegistration(0,"Tên tài khoản: a-z, 0-9, _");return;
             }
         }
-        if(email.indexOf('@')<=0||email.indexOf('.',email.indexOf('@'))<0){failRegistration(2,"Email không hợp lệ");return;}
-        if(pass.length()<8){failRegistration(3,"Mật khẩu phải có ít nhất 8 ký tự");return;}
-        if(!pass.equals(confirm)){failRegistration(4,"Hai mật khẩu không trùng nhau");return;}
-        final String req="name="+encode(name)+"&handle="+encode(handle)+"&email="+encode(email)+"&password="+encode(pass);
-        registerFields[3]="";registerFields[4]="";authError="";registerErrorField=-1;
-        final String validEmail=email;
+        if(pass.length()<8||pass.length()>128){failRegistration(1,"Mật khẩu phải có 8-128 ký tự");return;}
+        if(!pass.equals(confirm)){failRegistration(2,"Mật khẩu nhập lại không khớp");return;}
+        final String req="handle="+encode(handle)+"&password="+encode(pass);
+        registerFields[1]="";registerFields[2]="";authError="";registerErrorField=-1;
+        final String account=handle;
         work(new Task(){public void run()throws Exception{
-            single("/m/register",req);
+            try{single("/m/register",req);}catch(Exception ex){
+                authError=ex.getMessage()==null?"Đăng ký thất bại":ex.getMessage();
+                registerErrorField=authError.toLowerCase().indexOf("tài khoản")>=0?0:-1;
+                throw new Exception(authError);
+            }
             for(int i=0;i<registerFields.length;i++)registerFields[i]="";
-            loginEmail=validEmail;loginPassword="";
+            loginEmail=account;loginPassword="";
             welcomeSelection=1;tab=0;
-            notification="Đã đăng ký. Kiểm tra email xác nhận nếu được yêu cầu.";
+            notification="Đã tạo tài khoản. Đăng nhập để đặt tên hiển thị và avatar.";
         }});
     }
     private void openRecovery(){
-        if(busy)return;
-        recoveryFields=new String[]{loginEmail.trim(),"","",""};recoverySent=false;recoverySelection=0;
-        authError="";notification="";tab=11;screen.repaint();
+        // Username-only accounts do not need email or OTP. Password resets are admin-managed.
+        authError="Quên mật khẩu? Liên hệ quản trị viên MiniSocial.";
+        loginErrorField=-1;notification="";tab=0;screen.repaint();
     }
     private void openChange(){
         if(token.length()==0)return;
@@ -283,20 +395,20 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
     }
     private void editLogin(boolean email){
         mode=email?"login-email":"login-password";
-        editor=new TextBox(email?"Tài khoản (Email)":"Mật khẩu",email?loginEmail:loginPassword,email?140:128,
-             email?TextField.EMAILADDR:(TextField.ANY|TextField.PASSWORD));
+        editor=new TextBox(email?"Tên tài khoản":"Mật khẩu",email?loginEmail:loginPassword,email?140:128,
+             email?TextField.ANY:(TextField.ANY|TextField.PASSWORD));
         editor.addCommand(save);editor.addCommand(cancel);editor.setCommandListener(this);display.setCurrent(editor);
     }
     private void submitLogin(){
-        final String email=loginEmail.trim(),pass=loginPassword;
-        if(email.length()==0||email.indexOf('@')<1){authError="Nhập email tài khoản";loginErrorField=0;screen.repaint();return;}
+        final String account=loginEmail.trim().toLowerCase(),pass=loginPassword;
+        if(account.length()==0){authError="Nhập tên tài khoản";loginErrorField=0;screen.repaint();return;}
         if(pass.length()==0){authError="Nhập mật khẩu";loginErrorField=1;screen.repaint();return;}
         authError="";loginErrorField=-1;
         // Do not keep the password after launching the login request.
         loginPassword="";
         work(new Task(){public void run()throws Exception{
-            String[]r=single("/m/login","email="+encode(email)+"&password="+encode(pass));
-            me=r[1];token=r[2];saveSession();tab=1;feed=listing("/m/feed");
+            String[]r=single("/m/login","handle="+encode(account)+"&password="+encode(pass));
+            me=r[1];token=r[2];saveSession();afterLogin();
         }});
     }
     public void commandAction(Command cmd,Displayable item){if(cmd==cancel){display.setCurrent(screen);return;}if(cmd!=save)return;
@@ -307,10 +419,15 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             authError="";loginErrorField=-1;notification="";
             display.setCurrent(screen);screen.repaint();return;
         }
+        if(selected.startsWith("setup-field-")){
+            int i=Integer.parseInt(selected.substring("setup-field-".length()));
+            onboardingFields[i]=value;onboardingSelection=Math.min(3,i+1);
+            authError="";display.setCurrent(screen);screen.repaint();return;
+        }
         if(selected.startsWith("register-field-")){
             int i=Integer.parseInt(selected.substring("register-field-".length()));
-            registerFields[i]=i==1?value.trim().toLowerCase():value;
-            registerSelection=Math.min(5,i+1);
+            registerFields[i]=i==0?value.trim().toLowerCase():value;
+            registerSelection=Math.min(3,i+1);
             authError="";registerErrorField=-1;notification="";
             display.setCurrent(screen);screen.repaint();return;
         }
@@ -411,7 +528,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             txt(g,clock(),0xD6FFE9,max(pad+10,cw-pad-small.stringWidth(clock())),max(3,(headerH-small.getHeight())/2),small);
             if(tab==8)drawServer(g);
             else if(tab==9)drawInfo(g);
-            else if(tab==10)drawRegister(g);
+            else if(tab==10||tab==13)drawRegister(g);
             else if(tab==11||tab==12)drawPasswordForm(g,tab==11);
             else if(token.length()==0)drawWelcome(g);
             else if(tab==5)photoView(g);
@@ -424,14 +541,14 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 else if(tab==6)drawComments(g);
                 else if(tab==7)drawRequests(g);
             }
-            if((tab!=0&&tab!=10&&tab!=11&&tab!=12)&&(busy||notification!=null&&notification.length()>0)){
+            if((tab!=0&&tab!=10&&tab!=11&&tab!=12&&tab!=13)&&(busy||notification!=null&&notification.length()>0)){
                 int messageH=large?24:16;
                 fill(g,busy?0xFFF1CE:0xD9F6E6,0,ch-footerH-messageH,cw,messageH);
                 txt(g,trim(busy?"Dang tai...":notification,cw-2*pad,small),busy?0x734A0A:DARK,pad,ch-footerH-messageH+2,small);
             }
             grad(g,ch-footerH,footerH);
-            txt(g,tab==8?"Sửa (#)":tab==9?"Thông tin":tab==10||tab==11||tab==12?"OK: Chọn":token.length()==0?"OK: Chọn":"Tùy chọn",0xFFFFFF,pad+3,ch-footerH+max(2,(footerH-bold.getHeight())/2),bold);
-            String back=(tab==10||tab==11?"Đăng nhập":tab==12?"Hồ sơ":tab==9?"Trở lại":token.length()==0&&tab!=8?"Máy chủ":"Quay lại");
+            txt(g,tab==8?"Sửa (#)":tab==9?"Thông tin":tab==10||tab==11||tab==12||tab==13?"OK: Chọn":token.length()==0?"OK: Chọn":"Tùy chọn",0xFFFFFF,pad+3,ch-footerH+max(2,(footerH-bold.getHeight())/2),bold);
+            String back=(tab==13?"Hồ sơ":tab==10||tab==11?"Đăng nhập":tab==12?"Hồ sơ":tab==9?"Trở lại":token.length()==0&&tab!=8?"Máy chủ":"Quay lại");
             txt(g,back,0xFFFFFF,cw-pad-3-bold.stringWidth(back),ch-footerH+max(2,(footerH-bold.getHeight())/2),bold);
         }
         /** Compact, responsive web-style login card, rendered without PNG assets. */
@@ -496,10 +613,10 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             String loginStatus=(authError.length()>0&&(ch-headerH-footerH-6<220))?authError:notification;
             if(!tight||loginStatus.length()>0)
                 txt(g,trim(loginStatus.length()>0?loginStatus:"Đăng nhập để kết nối bạn bè",width,small),loginStatus.length()>0?0xB14830:MUTED,inner,q.y+q.subY,small);
-            txt(g,"Tài khoản / Email",MUTED,inner,q.y+q.label1Y,small);
+            txt(g,"Tên tài khoản",MUTED,inner,q.y+q.label1Y,small);
             fill(g,welcomeSelection==0?0xE3FFF3:0xF5FAF9,inner,q.y+q.field1Y,width,q.fieldH);
             g.setColor(welcomeSelection==0?GREEN:0xAACCC2);g.drawRect(inner,q.y+q.field1Y,width-1,q.fieldH-1);
-            txt(g,trim(loginEmail.length()>0?loginEmail:"Nhập email của bạn",width-18,normal),loginEmail.length()>0?TEXT:0x77988E,inner+8,q.y+q.field1Y+max(2,(q.fieldH-normal.getHeight())/2),normal);
+            txt(g,trim(loginEmail.length()>0?loginEmail:"Nhập tên tài khoản",width-18,normal),loginEmail.length()>0?TEXT:0x77988E,inner+8,q.y+q.field1Y+max(2,(q.fieldH-normal.getHeight())/2),normal);
             if(!tight&&authError.length()>0&&loginErrorField==0)
                 txt(g,trim(authError,width,small),0xB14830,inner,q.y+q.field1Y+q.fieldH+2,small);
             txt(g,"Mật khẩu",MUTED,inner,q.y+q.label2Y,small);
@@ -524,7 +641,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 if(welcomeSelection==i+3)fill(g,SKY,q.linkX[i]+3,q.y+q.linksY+small.getHeight()+1,max(2,q.linkW[i]-6),1);
             }
         }
-        /** Compact registration form: all five fields stay in one screen, with scroll on tiny Nokia displays. */
+        /** Reused three-field card for signup and first-login profile, scrolls on small Nokia displays. */
         private final class RegisterLayout {
             int x,y,w,h,inner,width,rowY,rowH,first,visible,submitY,buttonH,linkY;
         }
@@ -542,9 +659,9 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             q.linkY=q.y+q.h-small.getHeight()-8;
             q.submitY=q.linkY-q.buttonH-6;
             int errorGap=authError.length()>0&&registerErrorField>=0?small.getHeight()+4:0;
-            q.visible=min(5,max(1,(q.submitY-q.rowY-3-errorGap)/q.rowH));
-            int focus=registerSelection>=5?4:registerSelection;
-            q.first=max(0,min(5-q.visible,focus-q.visible+1));
+            q.visible=min(3,max(1,(q.submitY-q.rowY-3-errorGap)/q.rowH));
+            int focus=(tab==13?onboardingSelection:registerSelection)>=3?2:(tab==13?onboardingSelection:registerSelection);
+            q.first=max(0,min(3-q.visible,focus-q.visible+1));
             return q;
         }
         private void drawRegister(Graphics g){
@@ -553,10 +670,10 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             fill(g,0xFFFFFF,q.x,q.y,q.w,q.h);
             g.setColor(BORDER);g.drawRect(q.x,q.y,q.w-1,q.h-1);
             fill(g,GREEN,q.inner,q.y+3,min(56,q.width/4),3);
-            txt(g,"Tạo tài khoản",DARK,q.inner,q.y+8,bold);
-            String caption=notification.length()>0?notification:"Điền thông tin, sau đó chọn Đăng ký";
+            txt(g,tab==13?"Thiết lập hồ sơ":"Tạo tài khoản",DARK,q.inner,q.y+8,bold);
+            String caption=authError.length()>0?authError:notification.length()>0?notification:tab==13?"Tên, avatar và model thiết bị":"Nhập 3 thông tin để đăng ký";
             if(ch>=300)txt(g,trim(caption,q.width,small),notification.length()>0?0xA83B2B:MUTED,q.inner,q.y+9+bold.getHeight(),small);
-            if(q.visible<5){String page=(q.first+1)+"-"+(q.first+q.visible)+"/5";
+            if(q.visible<3){String page=(q.first+1)+"-"+(q.first+q.visible)+"/3";
                 txt(g,page,MUTED,q.inner+q.width-small.stringWidth(page),q.y+10,small);
             }
             for(int i=q.first;i<q.first+q.visible;i++){
@@ -564,27 +681,29 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 int y=q.rowY+(i-q.first)*q.rowH+(i>registerErrorField?errorGap:0);
                 int controlH=ch<300?q.rowH-3:q.rowH-small.getHeight()-4;
                 int controlY=ch<300?y:y+small.getHeight()+1;
-                boolean selected=i==registerSelection;
-                if(ch>=300)txt(g,REG_LABELS[i],selected?GREEN_DEEP:MUTED,q.inner,y,small);
+                boolean selected=i==(tab==13?onboardingSelection:registerSelection);
+                String[] labels=tab==13?SETUP_LABELS:REG_LABELS;
+                String[] hints=tab==13?SETUP_HINTS:REG_HINTS;
+                if(ch>=300)txt(g,labels[i],selected?GREEN_DEEP:MUTED,q.inner,y,small);
                 fill(g,selected?0xE4FFF3:0xF4FAF8,q.inner,controlY,q.width,controlH);
                 g.setColor(selected?GREEN:0xB5D5C9);g.drawRect(q.inner,controlY,q.width-1,controlH-1);
-                String content=registerFields[i];
-                if(i>=3&&content.length()>0){StringBuffer b=new StringBuffer();for(int z=0;z<min(16,content.length());z++)b.append('*');content=b.toString();}
-                String show=content.length()>0?content:REG_HINTS[i];
-                if(ch<300)show=REG_LABELS[i]+": "+(content.length()>0?content:"...");
+                String content=(tab==13?onboardingFields:registerFields)[i];
+                if(tab==10&&i>=1&&content.length()>0){StringBuffer b=new StringBuffer();for(int z=0;z<min(16,content.length());z++)b.append('*');content=b.toString();}
+                String show=content.length()>0?content:hints[i];
+                if(ch<300)show=labels[i]+": "+(content.length()>0?content:"...");
                 Font f=ch<300?small:normal;
                 txt(g,trim(show,q.width-12,f),content.length()>0?TEXT:0x78968B,q.inner+6,controlY+max(1,(controlH-f.getHeight())/2),f);
                 if(authError.length()>0&&registerErrorField==i)
                     txt(g,trim(authError,q.width,small),0xAF3F32,q.inner,y+q.rowH+1,small);
             }
-            fill(g,registerSelection==5?SKY:GREEN_DEEP,q.inner,q.submitY,q.width,q.buttonH);
-            if(registerSelection==5){g.setColor(0xFFFFFF);g.drawRect(q.inner+2,q.submitY+2,q.width-5,q.buttonH-5);}
-            String label=busy?"Đang đăng ký...":"Đăng ký";
+            fill(g,(tab==13?onboardingSelection:registerSelection)==3?SKY:GREEN_DEEP,q.inner,q.submitY,q.width,q.buttonH);
+            if((tab==13?onboardingSelection:registerSelection)==3){g.setColor(0xFFFFFF);g.drawRect(q.inner+2,q.submitY+2,q.width-5,q.buttonH-5);}
+            String label=busy?"Đang lưu...":tab==13?"Hoàn tất":"Đăng ký";
             txt(g,label,0xFFFFFF,q.inner+max(3,(q.width-bold.stringWidth(label))/2),q.submitY+max(1,(q.buttonH-bold.getHeight())/2),bold);
-            String back="Đã có tài khoản? Đăng nhập";
-            int linkColor=registerSelection==6?SKY:GREEN_DEEP;
+            String back=tab==13?"Quay lại hồ sơ":"Đã có tài khoản? Đăng nhập";
+            int linkColor=(tab==13?onboardingSelection:registerSelection)==4?SKY:GREEN_DEEP;
             txt(g,trim(back,q.width,small),linkColor,q.inner+max(0,(q.width-small.stringWidth(back))/2),q.linkY,small);
-            if(registerSelection==6)fill(g,SKY,q.inner+max(0,(q.width-small.stringWidth(back))/2),q.linkY+small.getHeight()+1,min(q.width,small.stringWidth(back)),1);
+            if((tab==13?onboardingSelection:registerSelection)==4)fill(g,SKY,q.inner+max(0,(q.width-small.stringWidth(back))/2),q.linkY+small.getHeight()+1,min(q.width,small.stringWidth(back)),1);
         }
         /** Unified OTP recovery/change-password form; rows scroll on Nokia 320x240. */
         private final class SecurityLayout {
@@ -746,11 +865,13 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 panel(g,pad,ry,cw-2*pad,cardH,i==selection);
                 int avatar=large?45:29;
                 fill(g,0x61CBA4,pad+6,ry+6,avatar,avatar);
-                txt(g,"@",0xFFFFFF,pad+6+avatar/4,ry+6+avatar/4,bold);
+                Image postAvatar=(Image)avatarCache.get(piece(a,9));
+                if(postAvatar!=null)g.drawImage(postAvatar,pad+6,ry+6,Graphics.TOP|Graphics.LEFT);
+                else txt(g,"@",0xFFFFFF,pad+6+avatar/4,ry+6+avatar/4,bold);
                 int textX=pad+avatar+13;
                 int nameY=ry+5;
                 txt(g,trim(piece(a,2),cw-textX-pad-4,bold),DARK,textX,nameY,bold);
-                txt(g,trim(piece(a,3).replace('T',' '),cw-textX-pad-4,small),MUTED,textX,nameY+bold.getHeight()+2,small);
+                txt(g,trim(piece(a,3).replace('T',' ')+" · "+piece(a,8),cw-textX-pad-4,small),MUTED,textX,nameY+bold.getHeight()+2,small);
                 int contentY=ry+avatar+12;
                 int actionY=ry+cardH-small.getHeight()-5;
                 int lines=max(1,(actionY-contentY-1)/max(1,normal.getHeight()));
@@ -770,14 +891,16 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             panel(g,pad,y,cw-2*pad,ph,false);
             int avatar=large?73:(narrow?52:45);
             fill(g,0x61CBA4,pad+8,y+8,avatar,avatar);
-            txt(g,"@",0xFFFFFF,pad+8+avatar/3,y+8+avatar/3,bold);
+            if(profileAvatarImage!=null&&avatarMediaId.equals(profileAvatarLoaded)){
+                g.drawImage(profileAvatarImage,pad+8,y+8,Graphics.TOP|Graphics.LEFT);
+            }else txt(g,"@",0xFFFFFF,pad+8+avatar/3,y+8+avatar/3,bold);
             int tx=pad+avatar+16;
             txt(g,trim(profileName,cw-tx-pad-7,bold),DARK,tx,y+10,bold);
             txt(g,trim("@"+profileHandle,cw-tx-pad-7,small),MUTED,tx,y+12+bold.getHeight(),small);
             int bioY=y+avatar+15;
             wrapped(g,profileBio,TEXT,pad+8,bioY,cw-2*pad-16,small,large?2:1);
             headerHint(g,profileNeedsPaging()?"5: Bài viết | 6: Tên | 7: Bio":"6: Tên  |  7: Giới thiệu",y+ph-small.getHeight()-6);
-            if(profileId.equals(me)){String change="8: Đổi MK";txt(g,change,GREEN_DEEP,cw-pad-8-small.stringWidth(change),y+ph-small.getHeight()-6,small);}
+            if(profileId.equals(me)){String change="8: Đổi MK | 9: Hồ sơ";txt(g,change,GREEN_DEEP,cw-pad-8-small.stringWidth(change),y+ph-small.getHeight()-6,small);}
             if(!profileNeedsPaging())drawPosts(g,y+ph+6,profilePosts);
         }
         private int friendListY(){return bodyTop+(large?65:53);}
@@ -806,7 +929,8 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 int space=large?65:30;int x=mine?pad+space:pad;int width=cw-2*pad-space;
                 panel(g,x,ry,width,bubbleH,false);
                 String value=piece(m,3).length()>0?"[Anh] "+piece(m,2):piece(m,2);
-                wrapped(g,value,mine?BLUE:TEXT,x+7,ry+6,width-14,normal,max(1,(bubbleH-12)/max(1,normal.getHeight())));
+                txt(g,trim(piece(m,5),width-12,small),MUTED,x+7,ry+4,small);
+                wrapped(g,value,mine?BLUE:TEXT,x+7,ry+small.getHeight()+6,width-14,normal,max(1,(bubbleH-small.getHeight()-12)/max(1,normal.getHeight())));
             }
             if(messages.size()==0)headerHint(g,"Chua co tin nhan",y+8);
         }
@@ -819,7 +943,8 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 int ry=y+(i-first)*(height+gap);if(ry+height>bodyBottom)break;
                 String[]a=(String[])comments.elementAt(i);panel(g,pad,ry,cw-2*pad,height,i==selection);
                 txt(g,trim(piece(a,1),cw-2*pad-16,bold),DARK,pad+8,ry+5,bold);
-                wrapped(g,piece(a,2),TEXT,pad+8,ry+7+bold.getHeight(),cw-2*pad-16,normal,large?2:1);
+                txt(g,trim(piece(a,4),cw-2*pad-16,small),MUTED,pad+8,ry+6+bold.getHeight(),small);
+                wrapped(g,piece(a,2),TEXT,pad+8,ry+8+bold.getHeight()+small.getHeight(),cw-2*pad-16,normal,large?2:1);
             }
             if(comments.size()==0)headerHint(g,"Chua co binh luan",y+8);
         }
@@ -893,10 +1018,14 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             }});
         }
         private void back(){
+            if(tab==13){
+                if(onboardingRequired)logout();else {tab=2;screen.repaint();}
+                return;
+            }
             if(tab==11){recoveryFields=new String[]{"","","",""};recoverySent=false;authError="";notification="";tab=0;screen.repaint();return;}
             if(tab==12){changeFields=new String[]{"","",""};authError="";notification="";tab=2;screen.repaint();return;}
             if(tab==8||tab==9||tab==10){
-                if(tab==10){registerFields[3]="";registerFields[4]="";authError="";registerErrorField=-1;notification="";}
+                if(tab==10){registerFields[1]="";registerFields[2]="";authError="";registerErrorField=-1;notification="";}
                 tab=token.length()==0?0:1;screen.repaint();return;
             }
             if(tab==5){tab=4;reload();}
@@ -957,27 +1086,29 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 if(k==-7||k==-6||k=='0'||action==Canvas.FIRE){tab=0;repaint();}
                 return;
             }
-            if(tab==10){
+            if(tab==10||tab==13){
+                boolean setup=tab==13;
+                int current=setup?onboardingSelection:registerSelection;
                 if(k==-7){back();return;}
-                if(action==Canvas.UP){registerSelection=(registerSelection+6)%7;repaint();return;}
-                if(action==Canvas.DOWN){registerSelection=(registerSelection+1)%7;repaint();return;}
-                if(action==Canvas.LEFT){registerSelection=(registerSelection+6)%7;repaint();return;}
-                if(action==Canvas.RIGHT){registerSelection=(registerSelection+1)%7;repaint();return;}
-                if(action==Canvas.FIRE||k==-6){
-                    if(registerSelection<5)editRegisterField(registerSelection);
-                    else if(registerSelection==5)submitRegistration();
+                if(action==Canvas.UP||action==Canvas.LEFT)current=(current+4)%5;
+                else if(action==Canvas.DOWN||action==Canvas.RIGHT)current=(current+1)%5;
+                else if(action==Canvas.FIRE||k==-6){
+                    if(current<3){if(setup)editOnboardingField(current);else editRegisterField(current);}
+                    else if(current==3){if(setup)submitOnboarding();else submitRegistration();}
                     else back();
                     return;
                 }
+                if(setup)onboardingSelection=current;else registerSelection=current;
                 // Nokia E72 QWERTY can type directly into the selected Canvas field.
                 // OK still offers native TextBox editing (also supports emulator/touch).
-                if(registerSelection<5){
-                    String prev=registerFields[registerSelection];
+                if(current<3){
+                    String[] fields=setup?onboardingFields:registerFields;
+                    String prev=fields[current];
                     if(k==8||k==127||k==-8){
-                        if(prev.length()>0)registerFields[registerSelection]=prev.substring(0,prev.length()-1);
+                        if(prev.length()>0)fields[current]=prev.substring(0,prev.length()-1);
                     }else if(k>=32&&k<=126){
-                        int lim=registerSelection==0?50:registerSelection==1?24:registerSelection==2?140:128;
-                        if(prev.length()<lim)registerFields[registerSelection]=prev+(char)k;
+                        int lim=setup?(current==0?50:current==1?64:180):(current==0?24:current==1?140:128);
+                        if(prev.length()<lim)fields[current]=prev+(char)k;
                     }
                     authError="";registerErrorField=-1;notification="";repaint();
                 }
@@ -1022,6 +1153,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 }
                 if(navFocus&&action==Canvas.FIRE){chooseNav(navSelection);repaint();return;}
                 if(action==Canvas.UP||action==Canvas.DOWN)navFocus=false;
+                if(tab==2&&k=='9'&&profileId.equals(me)){openOnboarding();return;}
                 if(k=='1'){navigate(1);return;}
                 if(k=='3'){profileId=me;navigate(2);return;}
                 if(k=='4'){navigate(3);return;}
@@ -1087,17 +1219,18 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 if(y>=q.backY-3||y<q.y){back();return;}
                 repaint();return;
             }
-            if(tab==10){
+            if(tab==10||tab==13){
+                boolean setup=tab==13;
                 RegisterLayout r=registerLayout();
                 if(x>=r.inner&&x<r.inner+r.width){
                     int errGap=authError.length()>0&&registerErrorField>=0?small.getHeight()+4:0;
                     for(int i=r.first;i<r.first+r.visible;i++){
                         int iy=r.rowY+(i-r.first)*r.rowH+(i>registerErrorField?errGap:0);
-                        if(y>=iy&&y<iy+r.rowH){registerSelection=i;editRegisterField(i);return;}
+                        if(y>=iy&&y<iy+r.rowH){if(setup){onboardingSelection=i;editOnboardingField(i);}else{registerSelection=i;editRegisterField(i);}return;}
                     }
                 }
-                if(y>=r.submitY&&y<r.submitY+r.buttonH){registerSelection=5;submitRegistration();return;}
-                if(y>=r.linkY-2&&y<r.y+r.h+4){registerSelection=6;back();return;}
+                if(y>=r.submitY&&y<r.submitY+r.buttonH){if(setup){onboardingSelection=3;submitOnboarding();}else{registerSelection=3;submitRegistration();}return;}
+                if(y>=r.linkY-2&&y<r.y+r.h+4){if(setup)onboardingSelection=4;else registerSelection=4;back();return;}
                 if(y>=ch-footerH){back();return;}
                 repaint();return;
             }

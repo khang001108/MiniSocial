@@ -19,13 +19,15 @@ jobs:
         run: sh server/build.sh
       - name: Build Nokia E72 JAR / JAD
         run: python3 client/build_j2me.py
-      - name: Check password recovery/change against mock Supabase
-        run: python3 tests/test_password_auth.py
+      - name: Check username accounts, admin controls and onboarding (mock Supabase)
+        run: |
+          python3 tests/test_admin_username.py
+          python3 tests/test_onboarding_device.py
       - name: Test Nokia form navigation and layout
         run: |
           mkdir -p client/build/tests
           javac --release 8 -encoding UTF-8 -cp client/lib-stubs/midp2-compile-only.jar:client/build/classes -d client/build/tests tests/*.java
-          for test in LoginFormSmoke RegistrationFormSmoke ServerSelectionSmoke ResponsiveLayoutSmoke PasswordFormsSmoke; do
+          for test in LoginFormSmoke RegistrationFormSmoke ServerSelectionSmoke ResponsiveLayoutSmoke PasswordFormsSmoke OnboardingSmoke; do
             java -cp client/lib-stubs/midp2-compile-only.jar:client/build/classes:client/build/tests "$test"
           done
       - name: Validate JAR format

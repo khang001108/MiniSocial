@@ -12,6 +12,7 @@ import java.util.concurrent.*;
 public final class Server {
   private static final String UTF8="UTF-8";
   private final Supabase db=new Supabase();
+  private final AdminConsole admin=new AdminConsole(db);
   private final ConcurrentHashMap<String,Session> sessions=new ConcurrentHashMap<>();
   // Bound recovery abuse; throttles are additive to Supabase's own limits.
   private final ConcurrentHashMap<String,Long> recoveryRequests=new ConcurrentHashMap<>();
@@ -33,6 +34,7 @@ public final class Server {
       if(path.equals("/")||path.equals("/index.html")){serveStatic(x,"index.html",true);return;}
       if(path.equals("/download/MiniSocial-Responsive.jar")){serveStatic(x,"MiniSocial-Responsive.jar",false);return;}
       if(path.equals("/download/MiniSocial-Responsive.jad")){serveStatic(x,"MiniSocial-Responsive.jad",false);return;}
+      if(path.equals("/admin")||path.startsWith("/admin/")){admin.handle(x);return;}
       if(!path.startsWith("/m/"))throw new Fault(404,"Not found");
       boolean post=x.getRequestMethod().equals("POST");boolean get=x.getRequestMethod().equals("GET");
       if(!post&&!get)throw new Fault(405,"Method not allowed");
@@ -40,13 +42,14 @@ public final class Server {
       Map<String,String> f=post&&!path.equals("/m/upload")?parse(new String(readLimit(x.getRequestBody(),32768),StandardCharsets.UTF_8)):Collections.emptyMap();
       if(path.equals("/m/register")&&post){registration(x,f);return;}
       if(path.equals("/m/login")&&post){login(x,f);return;}
-      if(path.equals("/m/password/recover")&&post){sendRecovery(x,f);return;}
-      if(path.equals("/m/password/reset")&&post){resetPassword(x,f);return;}
+      if((path.equals("/m/password/recover")||path.equals("/m/password/reset"))&&post)
+        throw new Fault(410,"Khoi phuc mat khau: lien he quan tri vien MiniSocial");
       String me=authenticated(x);
       switch(path){
         case "/m/password/change": require(post);changePassword(x,f,me);break;
         case "/m/feed": require(get); feed(x,null);break;
         case "/m/profile":if(get)profile(x,q,me);else profileUpdate(x,f,me);break;
+        case "/m/onboarding":if(get)onboardingStatus(x,me);else onboardingSave(x,f,me);break;
         case "/m/profileposts":require(get);feed(x,id(q.getOrDefault("user",me)));break;
         case "/m/post":require(post);post(x,f,me);break;
         case "/m/like":require(post);like(x,f,me);break;
@@ -63,7 +66,12 @@ public final class Server {
         default:throw new Fault(404,"Unknown endpoint");
       }
     }catch(Fault e){send(x,e.status,"ERR|"+enc(e.getMessage()),"text/plain; charset=UTF-8");}
-     catch(Supabase.Error e){int status=e.status==401?401:(e.status>=400&&e.status<500?400:502);send(x,status,"ERR|"+enc(e.getMessage()),"text/plain; charset=UTF-8");}
+     catch(Supabase.Error e){
+       String message=e.getMessage().toLowerCase(Locale.ROOT);
+       if(message.contains("storage limit exceeded"))send(x,507,"ERR|"+enc("Da dat gioi han luu tru MiniSocial"),"text/plain; charset=UTF-8");
+       else {System.err.println("Supabase request error: HTTP "+e.status);
+         send(x,e.status==401?401:(e.status>=400&&e.status<500?400:502),"ERR|"+enc("Yeu cau that bai, kiem tra tai khoan hoac cau hinh Supabase"),"text/plain; charset=UTF-8");}
+     }
      catch(Exception e){System.err.println("Request failed: "+e.getClass().getSimpleName());send(x,500,"ERR|Server+error","text/plain; charset=UTF-8");}
      finally{x.close();}
   }
@@ -98,10 +106,32 @@ public final class Server {
   private String authenticated(HttpExchange x){
     String h=x.getRequestHeaders().getFirst("Authorization");if(h==null||!h.startsWith("Bearer "))throw new Fault(401,"Please log in");
     String token=h.substring(7);if(token.length()<20||token.length()>4096)throw new Fault(401,"Bad token");
-    Session s=sessions.get(token);long now=System.currentTimeMillis();if(s!=null&&now<s.until)return s.id;
-    String id=db.userId(token);
-    if(sessions.size()>1000)sessions.entrySet().removeIf(e->e.getValue().until<now);
-    if(sessions.size()<1000)sessions.put(token,new Session(id,now+30000));return id;
+    Session cached=sessions.get(token);long now=System.currentTimeMillis();
+    String user=(cached!=null&&now<cached.until)?cached.id:db.userId(token);
+    Map<String,Object> profile=accountStatus(user);
+    if(Boolean.TRUE.equals(profile.get("is_suspended")))throw new Fault(403,"Tai khoan da bi khoa, lien he quan tri");
+    long revoked=number(profile.get("sessions_revoked_before"));
+    if(revoked>0&&tokenIssuedAt(token)<=revoked)throw new Fault(401,"Phien dang nhap het han, hay dang nhap lai");
+    if(cached==null||now>=cached.until){
+      if(sessions.size()>1000)sessions.entrySet().removeIf(e->e.getValue().until<now);
+      if(sessions.size()<1000)sessions.put(token,new Session(user,now+30000));
+    }
+    return user;
+  }
+  private Map<String,Object> accountStatus(String user){
+    Map<String,Object> p=Json.map(first(db.db("GET","profiles?select=is_suspended,sessions_revoked_before&id=eq."+user+"&limit=1",null)));
+    if(p.isEmpty())throw new Fault(401,"Profile not found");
+    return p;
+  }
+  private static long number(Object v){if(v instanceof Number)return ((Number)v).longValue();try{return Long.parseLong(String.valueOf(v));}catch(Exception e){return 0;}}
+  private static long tokenIssuedAt(String jwt){
+    try{
+      String[] parts=jwt.split("\\.");
+      if(parts.length!=3)throw new Exception();
+      String text=new String(Base64.getUrlDecoder().decode(parts[1]),StandardCharsets.UTF_8);
+      long iat=number(Json.map(Json.parse(text)).get("iat"));
+      if(iat<=0)throw new Exception();return iat;
+    }catch(Exception e){throw new Fault(401,"Please log in again");}
   }
   private static String id(String v){if(v==null||!v.matches("[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}"))throw new Fault(400,"Invalid ID");return v;}
   private static String body(Map<String,String> m,String k,int max,boolean required){String v=m.getOrDefault(k,"").trim();if(v.length()>max||(required&&v.isEmpty()))throw new Fault(400,"Invalid "+k+" (max "+max+")");return v;}
@@ -112,13 +142,42 @@ public final class Server {
   private static void rows(HttpExchange x,List<String> rows)throws IOException{StringBuilder b=new StringBuilder("OK\n");for(String r:rows)b.append(r).append('\n');send(x,200,b.toString(),"text/plain; charset=UTF-8");}
   private static void ok(HttpExchange x,Object...fields)throws IOException{send(x,200,"OK|"+line(fields),"text/plain; charset=UTF-8");}
   private void registration(HttpExchange x,Map<String,String> f)throws IOException{
-    String email=body(f,"email",140,true),pass=body(f,"password",128,true),name=body(f,"name",50,true),handle=body(f,"handle",24,true).toLowerCase(Locale.ROOT);
-    if(pass.length()<8||!email.contains("@")||!handle.matches("[a-z0-9_]{3,24}"))throw new Fault(400,"Enter valid email, 8+ character password and handle a-z0-9_");
-    db.signup(email,pass,name,handle);ok(x,"Account created. Confirm email if Supabase requires it.");
+    String handle=body(f,"handle",24,true).toLowerCase(Locale.ROOT),pass=f.getOrDefault("password","");
+    if(!handle.matches("[a-z0-9_]{3,24}")||pass.length()<8||pass.length()>128)
+      throw new Fault(400,"Ten tai khoan 3-24 ky tu a-z0-9_, mat khau it nhat 8 ky tu");
+    checkRecoveryAttempts("reg-ip:"+address(x),20);
+    Map<String,Object> settings=Json.map(first(db.db("GET","minisocial_limits?select=registration_enabled&id=eq.1",null)));
+    if(settings.isEmpty())throw new Fault(503,"Chua cap nhat SQL MiniSocial 1.7");
+    if(!Boolean.TRUE.equals(settings.get("registration_enabled")))throw new Fault(403,"Dang ky dang dong, lien he quan tri");
+    if(first(db.db("GET","profiles?select=id&handle=eq."+handle+"&limit=1",null))!=null)
+      throw new Fault(409,"Ten tai khoan da duoc su dung");
+    try{db.registerHandle(handle,pass);}
+    catch(Supabase.Error e){
+      if(e.status>=400&&e.status<500)throw new Fault(409,"Ten tai khoan da ton tai hoac khong hop le");
+      throw e;
+    }
+    ok(x,"Tao tai khoan thanh cong, khong can email/OTP");
   }
   private void login(HttpExchange x,Map<String,String> f)throws IOException{
-    Object obj=db.login(body(f,"email",140,true),body(f,"password",128,true));Map<String,Object> a=Json.map(obj);String token=val(a,"access_token");if(token.length()<20)throw new Fault(401,"Login failed");
-    String user=val(Json.map(a.get("user")),"id");ok(x,user,token);
+    String name=f.getOrDefault("handle",f.getOrDefault("email","")).trim().toLowerCase(Locale.ROOT);
+    String password=f.getOrDefault("password","");
+    if(password.isEmpty()||password.length()>128)throw new Fault(401,"Sai tai khoan hoac mat khau");
+    String email=name;
+    if(!name.contains("@")){
+      if(!name.matches("[a-z0-9_]{3,24}"))throw new Fault(401,"Sai tai khoan hoac mat khau");
+      Map<String,Object> record=Json.map(first(db.db("GET","profiles?select=id,auth_email,is_suspended&handle=eq."+name+"&limit=1",null)));
+      if(record.isEmpty()||Boolean.TRUE.equals(record.get("is_suspended")))throw new Fault(401,"Sai tai khoan hoac mat khau");
+      email=val(record,"auth_email");
+    }else if(name.length()>140)throw new Fault(401,"Sai tai khoan hoac mat khau");
+    if(email.length()==0)throw new Fault(401,"Sai tai khoan hoac mat khau");
+    Map<String,Object> auth;
+    try{auth=Json.map(db.login(email,password));}
+    catch(Supabase.Error e){if(e.status>=400&&e.status<500)throw new Fault(401,"Sai tai khoan hoac mat khau");throw e;}
+    String jwt=val(auth,"access_token"),user=val(Json.map(auth.get("user")),"id");
+    if(jwt.length()<20)throw new Fault(401,"Sai tai khoan hoac mat khau");
+    Map<String,Object> profile=accountStatus(user);
+    if(Boolean.TRUE.equals(profile.get("is_suspended")))throw new Fault(403,"Tai khoan da bi khoa");
+    ok(x,user,jwt);
   }
   private static boolean validEmail(String email){
     return email.length()>5&&email.length()<141&&email.indexOf('@')>0&&email.indexOf('.')>email.indexOf('@')+1&&email.indexOf(' ')<0;
@@ -178,17 +237,38 @@ public final class Server {
     String bearer=x.getRequestHeaders().getFirst("Authorization");
     if(bearer==null||!bearer.startsWith("Bearer "))throw new Fault(401,"Please log in");
     db.changePassword(bearer.substring(7),current,next,me);
+    db.db("PATCH","profiles?id=eq."+me,Map.of("sessions_revoked_before",System.currentTimeMillis()/1000L));
     sessions.remove(bearer.substring(7));
     ok(x,"Password changed");
   }
   private void feed(HttpExchange x,String author)throws IOException{
-    String path="feed_items?select=id,author_id,display_name,body,created_at,likes_count,comments_count,media_id&order=created_at.desc&limit=15";
+    String path="feed_items?select=id,author_id,display_name,body,created_at,likes_count,comments_count,media_id,device_model,avatar_media_id&order=created_at.desc&limit=15";
     if(author!=null)path+="&author_id=eq."+author;
-    List<String> lines=new ArrayList<>();for(Object o:Json.list(db.db("GET",path,null))){Map<String,Object>m=Json.map(o);lines.add(line(val(m,"id"),val(m,"author_id"),val(m,"display_name"),val(m,"created_at"),val(m,"likes_count"),val(m,"comments_count"),val(m,"body"),val(m,"media_id")));}rows(x,lines);
+    List<String> lines=new ArrayList<>();for(Object o:Json.list(db.db("GET",path,null))){Map<String,Object>m=Json.map(o);lines.add(line(val(m,"id"),val(m,"author_id"),val(m,"display_name"),val(m,"created_at"),val(m,"likes_count"),val(m,"comments_count"),val(m,"body"),val(m,"media_id"),val(m,"device_model"),val(m,"avatar_media_id")));}rows(x,lines);
+  }
+  /** Device label is a user-supplied display hint, NEVER trusted identity or authentication. */
+  private static String deviceModel(HttpExchange x){
+    String raw=x.getRequestHeaders().getFirst("X-MiniSocial-Device");
+    if(raw==null)return "Thiet bi khong ro";
+    raw=raw.trim();
+    if(raw.length()<2||raw.length()>64||!raw.matches("[a-zA-Z0-9 ._()/-]{2,64}"))return "Thiet bi khong ro";
+    return raw;
+  }
+  private void onboardingStatus(HttpExchange x,String me)throws IOException{
+    Map<String,Object>m=Json.map(first(db.db("GET","profiles?select=id,display_name,handle,avatar_media_id,onboarding_complete&id=eq."+me+"&limit=1",null)));
+    if(m.isEmpty())throw new Fault(404,"Profile missing");
+    ok(x,Boolean.TRUE.equals(m.get("onboarding_complete"))?"1":"0",val(m,"display_name"),val(m,"handle"),val(m,"avatar_media_id"));
+  }
+  private void onboardingSave(HttpExchange x,Map<String,String>f,String me)throws IOException{
+    String name=body(f,"name",50,true),avatar=f.getOrDefault("avatar","");
+    if(name.length()<2)throw new Fault(400,"Ten hien thi can 2-50 ky tu");
+    Map<String,Object>p=new LinkedHashMap<>();p.put("display_name",name);p.put("onboarding_complete",true);
+    if(!avatar.isEmpty()){id(avatar);validateMedia(avatar,me,"avatar",null);p.put("avatar_media_id",avatar);}
+    db.db("PATCH","profiles?id=eq."+me,p);ok(x,"Profile ready");
   }
   private void profile(HttpExchange x,Map<String,String>q,String me)throws IOException{
-    String who=id(q.getOrDefault("user",me));Map<String,Object>m=Json.map(first(db.db("GET","profiles?select=id,display_name,handle,bio,created_at&id=eq."+who+"&limit=1",null)));
-    if(m.isEmpty())throw new Fault(404,"Profile not found");ok(x,val(m,"id"),val(m,"display_name"),val(m,"handle"),val(m,"bio"),val(m,"created_at"));
+    String who=id(q.getOrDefault("user",me));Map<String,Object>m=Json.map(first(db.db("GET","profiles?select=id,display_name,handle,bio,created_at,avatar_media_id&id=eq."+who+"&limit=1",null)));
+    if(m.isEmpty())throw new Fault(404,"Profile not found");ok(x,val(m,"id"),val(m,"display_name"),val(m,"handle"),val(m,"bio"),val(m,"created_at"),val(m,"avatar_media_id"));
   }
   private void profileUpdate(HttpExchange x,Map<String,String>f,String me)throws IOException{
     String name=body(f,"name",50,true),bio=body(f,"bio",240,false);
@@ -196,7 +276,7 @@ public final class Server {
   }
   private void post(HttpExchange x,Map<String,String>f,String me)throws IOException{
     String content=body(f,"body",500,false),media=f.getOrDefault("media","");if(content.isEmpty()&&media.isEmpty())throw new Fault(400,"Empty post");
-    Map<String,Object>p=new LinkedHashMap<>();p.put("author_id",me);p.put("body",content);
+    Map<String,Object>p=new LinkedHashMap<>();p.put("author_id",me);p.put("body",content);p.put("device_model",deviceModel(x));
     if(!media.isEmpty()){id(media);validateMedia(media,me,"post",null);p.put("media_id",media);}
     Object o=first(db.db("POST","posts",p));ok(x,val(Json.map(o),"id"));
   }
@@ -208,11 +288,11 @@ public final class Server {
   }
   private void comments(HttpExchange x,Map<String,String>q)throws IOException{
     String post=id(q.get("post"));List<String>out=new ArrayList<>();
-    for(Object o:Json.list(db.db("GET","comment_items?select=id,display_name,body,created_at&post_id=eq."+post+"&order=created_at.asc&limit=40",null))){Map<String,Object>m=Json.map(o);out.add(line(val(m,"id"),val(m,"display_name"),val(m,"body"),val(m,"created_at")));}rows(x,out);
+    for(Object o:Json.list(db.db("GET","comment_items?select=id,display_name,body,created_at,device_model&post_id=eq."+post+"&order=created_at.asc&limit=40",null))){Map<String,Object>m=Json.map(o);out.add(line(val(m,"id"),val(m,"display_name"),val(m,"body"),val(m,"created_at"),val(m,"device_model")));}rows(x,out);
   }
   private void comment(HttpExchange x,Map<String,String>f,String me)throws IOException{
     String post=id(f.get("post")),msg=body(f,"body",300,true);
-    Object o=first(db.db("POST","comments",Map.of("post_id",post,"author_id",me,"body",msg)));ok(x,val(Json.map(o),"id"));
+    Object o=first(db.db("POST","comments",Map.of("post_id",post,"author_id",me,"body",msg,"device_model",deviceModel(x))));ok(x,val(Json.map(o),"id"));
   }
   private void friends(HttpExchange x,String me)throws IOException{
     List<String>out=new ArrayList<>();for(Object o:Json.list(db.db("GET","friend_list?select=friend_id,display_name,handle&user_id=eq."+me+"&order=display_name.asc&limit=100",null))){Map<String,Object>m=Json.map(o);out.add(line(val(m,"friend_id"),val(m,"display_name"),val(m,"handle")));}rows(x,out);
@@ -240,13 +320,13 @@ public final class Server {
   private boolean friendsWith(String a,String b){return first(db.db("GET","friend_list?select=friend_id&user_id=eq."+a+"&friend_id=eq."+b+"&limit=1",null))!=null;}
   private void chat(HttpExchange x,Map<String,String>q,String me)throws IOException{
     String peer=id(q.get("user"));if(!friendsWith(me,peer))throw new Fault(403,"Add friend first");
-    String path="messages?select=id,sender_id,recipient_id,body,media_id,created_at&or=(and(sender_id.eq."+me+",recipient_id.eq."+peer+"),and(sender_id.eq."+peer+",recipient_id.eq."+me+"))&order=created_at.desc&limit=40";
-    List<Object>all=Json.list(db.db("GET",path,null));List<String>out=new ArrayList<>();for(int i=all.size()-1;i>=0;i--){Map<String,Object>m=Json.map(all.get(i));out.add(line(val(m,"id"),val(m,"sender_id"),val(m,"body"),val(m,"media_id"),val(m,"created_at")));}rows(x,out);
+    String path="messages?select=id,sender_id,recipient_id,body,media_id,created_at,device_model&or=(and(sender_id.eq."+me+",recipient_id.eq."+peer+"),and(sender_id.eq."+peer+",recipient_id.eq."+me+"))&order=created_at.desc&limit=40";
+    List<Object>all=Json.list(db.db("GET",path,null));List<String>out=new ArrayList<>();for(int i=all.size()-1;i>=0;i--){Map<String,Object>m=Json.map(all.get(i));out.add(line(val(m,"id"),val(m,"sender_id"),val(m,"body"),val(m,"media_id"),val(m,"created_at"),val(m,"device_model")));}rows(x,out);
   }
   private void message(HttpExchange x,Map<String,String>f,String me)throws IOException{
     String peer=id(f.get("user")),content=body(f,"body",500,false),media=f.getOrDefault("media","");
     if(!friendsWith(me,peer))throw new Fault(403,"Add friend first");if(content.isEmpty()&&media.isEmpty())throw new Fault(400,"Empty message");
-    Map<String,Object>msg=new LinkedHashMap<>();msg.put("sender_id",me);msg.put("recipient_id",peer);msg.put("body",content);
+    Map<String,Object>msg=new LinkedHashMap<>();msg.put("sender_id",me);msg.put("recipient_id",peer);msg.put("body",content);msg.put("device_model",deviceModel(x));
     if(!media.isEmpty()){id(media);validateMedia(media,me,"chat",peer);msg.put("media_id",media);}
     db.db("POST","messages",msg);ok(x,"Sent");
   }
@@ -255,7 +335,7 @@ public final class Server {
     if(m.isEmpty()||!me.equals(val(m,"owner_id"))||!scope.equals(val(m,"scope"))||(peer!=null&&!peer.equals(val(m,"receiver_id"))))throw new Fault(403,"Media not authorized");return m;
   }
   private void upload(HttpExchange x,Map<String,String>q,String me)throws IOException{
-    String scope=q.getOrDefault("scope","");if(!scope.equals("post")&&!scope.equals("chat"))throw new Fault(400,"Scope must be post or chat");
+    String scope=q.getOrDefault("scope","");if(!scope.equals("post")&&!scope.equals("chat")&&!scope.equals("avatar"))throw new Fault(400,"Scope must be post, chat or avatar");
     String peer=null;if(scope.equals("chat")){peer=id(q.get("user"));if(!friendsWith(me,peer))throw new Fault(403,"Add friend first");}
     String mime=x.getRequestHeaders().getFirst("Content-Type");if(mime==null)throw new Fault(400,"Missing image type");mime=mime.split(";")[0].trim().toLowerCase(Locale.ROOT);
     if(!mime.equals("image/jpeg")&&!mime.equals("image/png"))throw new Fault(415,"Only JPEG/PNG");
@@ -265,7 +345,7 @@ public final class Server {
     if((mime.equals("image/jpeg")&&!jpg)||(mime.equals("image/png")&&!png))throw new Fault(415,"Invalid image signature");
     String media=UUID.randomUUID().toString(),path=me+"/"+media+(jpg?".jpg":".png");
     db.upload(path,raw,mime);
-    try {Map<String,Object>r=new LinkedHashMap<>();r.put("id",media);r.put("owner_id",me);r.put("scope",scope);r.put("storage_path",path);r.put("mime_type",mime);if(peer!=null)r.put("receiver_id",peer);db.db("POST","media_files",r);}
+    try {Map<String,Object>r=new LinkedHashMap<>();r.put("id",media);r.put("owner_id",me);r.put("scope",scope);r.put("storage_path",path);r.put("mime_type",mime);r.put("size_bytes",raw.length);r.put("device_model",deviceModel(x));if(peer!=null)r.put("receiver_id",peer);db.db("POST","media_files",r);}
     catch(Exception e){db.deleteUpload(path);throw e;}
     ok(x,media);
   }
@@ -274,6 +354,7 @@ public final class Server {
     if(m.isEmpty())throw new Fault(404,"Image not found");
     boolean allowed=me.equals(val(m,"owner_id"))||me.equals(val(m,"receiver_id"));
     if("post".equals(val(m,"scope"))){allowed=allowed||first(db.db("GET","posts?select=id&media_id=eq."+media+"&limit=1",null))!=null;}
+    if("avatar".equals(val(m,"scope")))allowed=allowed||first(db.db("GET","profiles?select=id&avatar_media_id=eq."+media+"&limit=1",null))!=null;
     if(!allowed)throw new Fault(403,"Private image");
     byte[]raw=db.download(val(m,"storage_path"));x.getResponseHeaders().set("Cache-Control","private, max-age=60");send(x,200,raw,val(m,"mime_type"));
   }

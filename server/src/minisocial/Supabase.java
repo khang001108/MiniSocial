@@ -29,8 +29,23 @@ final class Supabase {
   private static Object safeJson(String s){try{return Json.parse(s);}catch(Exception e){return null;}}
   private static byte[] bytes(Object o){return Json.stringify(o).getBytes(java.nio.charset.StandardCharsets.UTF_8);}
   Object db(String method,String path,Object body){HttpResponse<byte[]>r=call(method,"/rest/v1/"+path,secret,secret,body==null?null:bytes(body),body==null?null:"application/json",!method.equals("GET"));String s=new String(r.body(),java.nio.charset.StandardCharsets.UTF_8);return s.isEmpty()?Collections.emptyList():Json.parse(s);}
-  Object signup(String email,String pass,String name,String handle){Map<String,Object> payload=Map.of("email",email,"password",pass,"data",Map.of("display_name",name,"handle",handle));return auth("/auth/v1/signup",payload);}
+  Object signup(String email,String pass,String handle){Map<String,Object> payload=Map.of("email",email,"password",pass,"data",Map.of("handle",handle));return auth("/auth/v1/signup",payload);}
   Object login(String email,String pass){return auth("/auth/v1/token?grant_type=password",Map.of("email",email,"password",pass));}
+  /** Create confirmed internal account. The virtual email is NEVER shown or emailed. */
+  Object registerHandle(String handle,String password){
+    String virtualEmail=handle+"@noemail.minisocial.invalid";
+    Map<String,Object> payload=new LinkedHashMap<>();
+    payload.put("email",virtualEmail);payload.put("password",password);payload.put("email_confirm",true);
+    payload.put("user_metadata",Map.of("handle",handle));
+    HttpResponse<byte[]> r=call("POST","/auth/v1/admin/users",secret,secret,bytes(payload),"application/json",false);
+    return Json.parse(new String(r.body(),java.nio.charset.StandardCharsets.UTF_8));
+  }
+  void adminResetPassword(String id,String next){
+    call("PUT","/auth/v1/admin/users/"+id,secret,secret,bytes(Map.of("password",next)),"application/json",false);
+  }
+  void adminDeleteUser(String id){
+    call("DELETE","/auth/v1/admin/users/"+id,secret,secret,null,null,false);
+  }
   private Object auth(String path,Object payload){HttpResponse<byte[]>r=call("POST",path,publishable,publishable,bytes(payload),"application/json",false);return Json.parse(new String(r.body(),java.nio.charset.StandardCharsets.UTF_8));}
   String userId(String jwt){HttpResponse<byte[]>r=call("GET","/auth/v1/user",publishable,jwt,null,null,false);String id=Json.string(Json.map(Json.parse(new String(r.body(),java.nio.charset.StandardCharsets.UTF_8))).get("id"));if(!id.matches("[0-9a-fA-F-]{36}"))throw new Error(401,"Invalid session");return id;}
   // Recovery codes are generated/verified by Supabase Auth. They are never stored here.

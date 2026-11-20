@@ -17,9 +17,9 @@ public final class LoginFormSmoke {
     MiniSocialMidlet app=new MiniSocialMidlet();app.startApp();Object canvas=get(app,"screen");
     expect(num(app,"welcomeSelection")==0,"first focus email");
     press(canvas,-105);expect("login-email".equals(get(app,"mode")),"FIRE opens email edit");
-    TextBox email=(TextBox)get(app,"editor");email.setString("demo@example.com");
+    TextBox email=(TextBox)get(app,"editor");email.setString("khazg");
     app.commandAction((Command)get(app,"save"),email);
-    expect("demo@example.com".equals(get(app,"loginEmail")),"email stored in RAM for form");
+    expect("khazg".equals(get(app,"loginEmail")),"email stored in RAM for form");
     expect(num(app,"welcomeSelection")==1,"next focus password");
     press(canvas,-105);expect("login-password".equals(get(app,"mode")),"FIRE opens password edit");
     TextBox pass=(TextBox)get(app,"editor");pass.setString("TEST_PRIVATE_PASSWORD");

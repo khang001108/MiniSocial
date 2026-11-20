@@ -1,3 +1,18 @@
+## MiniSocial v1.7.0 — username/password + web admin + storage quota
+
+**New:** Register without real email/OTP; username login; `https://minisocial.xubi.org/admin` for administrator management and global/per-user content quotas. **Read [HUONG-DAN-CAP-NHAT-v1.7.0.md](HUONG-DAN-CAP-NHAT-v1.7.0.md) before deploying.** Back up MiniSocial Supabase, apply v1.6 migration first if needed, then `deploy/UPDATE-v1.7.0-ADMIN.sql`. The v1.7 admin `MINISOCIAL_ADMIN_PASSWORD` environment variable is mandatory. Existing email accounts are retained.
+
+# MiniSocial v1.6.0 — Đăng ký 3 ô, hồ sơ sau đăng nhập và nhãn thiết bị
+
+**BẮT BUỘC trước khi Deploy:** chạy `deploy/UPDATE-v1.6.0.sql` trong Supabase project MiniSocial riêng; script có tính nâng cấp giữ dữ liệu hiện tại. Sau đó cập nhật GitHub `main`, Deploy Xubi server `minisocial-xubi` (`18087 → 8080`). Người chơi dùng JAR/JAD v1.6.0 mới.
+
+- Đăng ký chỉ còn **Tên tài khoản / Email / Mật khẩu**. Trùng handle trả lỗi dễ hiểu.
+- Đăng nhập lần đầu phải nhập **Tên hiển thị**; có thể chọn **avatar từ file** (JSR-75, giới hạn 180 KiB) và xem/chỉnh **model điện thoại** do ứng dụng đọc từ `microedition.platform`.
+- Nhãn model được gửi kèm tin nhắn, bình luận, bài đăng và metadata ảnh; nhãn là **tự khai báo từ client**, không phải chứng minh chính xác phần cứng. Không thu IMEI.
+- Tài khoản cũ giữ nguyên hồ sơ; mở **Hồ sơ → phím 9** để cập nhật tên, avatar và model trên máy.
+- `HTTPS` public vẫn cần Caddy/Dynu; chỉ cho `HTTP` khi ở LAN tin cậy.
+- Mã nguồn J2ME dùng một ô đường dẫn ảnh (`file:///...`); chưa có trình duyệt thư mục hay nút chụp ảnh trực tiếp.
+
 # MiniSocial v1.5.0 — Email OTP & đổi mật khẩu
 
 - **Quên mật khẩu:** Email → OTP 6 chữ số → mật khẩu mới, Supabase tạo và xác minh OTP. Ứng dụng không lưu OTP/mật khẩu vào RMS.

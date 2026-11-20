@@ -22,17 +22,17 @@ public class ResponsiveLayoutSmoke {
             Canvas.TEST_WIDTH=size[0];Canvas.TEST_HEIGHT=size[1];
             MiniSocialMidlet app=new MiniSocialMidlet();
             field(app,"token","TEST_TOKEN");field(app,"me","uid-test");
-            field(app,"feed",data(12,new String[]{"post-1","owner","Nokia Fan","2026-11-19T08:00","12","3","MiniSocial Java ME tren nhieu man hinh", ""}));
-            field(app,"profilePosts",data(8,new String[]{"post-2","owner","Nokia Fan","2026-11-19T08:00","5","2","Bai viet tu Nokia E72, E6", ""}));
+            field(app,"feed",data(12,new String[]{"post-1","owner","Nokia Fan","2026-11-19T08:00","12","3","MiniSocial Java ME tren nhieu man hinh", "", "Nokia Asha 302"}));
+            field(app,"profilePosts",data(8,new String[]{"post-2","owner","Nokia Fan","2026-11-19T08:00","5","2","Bai viet tu Nokia E72, E6", "", "Nokia E72"}));
             field(app,"profileName","Nguyen Van Minh");field(app,"profileHandle","nokiafan");field(app,"profileBio","Yeu thich Nokia va lap trinh Java ME.");
             field(app,"friends",data(15,new String[]{"uid-peer","Nokia Fan","nokiafan"}));
             field(app,"incoming",data(8,new String[]{"uid-peer","Nokia Fan","nokiafan"}));
-            field(app,"comments",data(12,new String[]{"comment-1","Nokia Fan","Binh luan demo"}));
-            field(app,"messages",data(18,new String[]{"msg-1","uid-peer","Chao ban! Nokia Java ME", ""}));
+            field(app,"comments",data(12,new String[]{"comment-1","Nokia Fan","Binh luan demo","2026-11-20T12:00:00","Nokia E72"}));
+            field(app,"messages",data(18,new String[]{"msg-1","uid-peer","Chao ban! Nokia Java ME", "","2026-11-20T13:00:00","Nokia Asha 302"}));
             field(app,"peerName","Nokia Fan");
             Object canvas=c.newInstance(app);
-            for(int t=0;t<=10;t++){
-                tab.setInt(app,t);field(app,"token",(t==0||t==9||t==10)?"":"TEST_TOKEN");
+            for(int t=0;t<=13;t++){
+                tab.setInt(app,t);field(app,"token",(t==0||t==9||t==10||t==11)?"":"TEST_TOKEN");
                 for(int sel:new int[]{0,6,11}){
                     selection.setInt(app,sel);
                     Graphics g=new Graphics();paint.invoke(canvas,g);

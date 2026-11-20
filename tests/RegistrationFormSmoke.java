@@ -18,35 +18,35 @@ public class RegistrationFormSmoke {
       field(app,"welcomeSelection",Integer.valueOf(4));press(canvas,-105);
       expect(number(app,"tab")==10,"registration form tab for "+wh[0]+"x"+wh[1]);
       expect(get(app,"editor")==null,"registration must NOT automatically launch TextBox");
-      String[]d=(String[])get(app,"registerFields");expect(d.length==5,"five persistent fields");
+      String[]d=(String[])get(app,"registerFields");expect(d.length==3,"three persistent fields");
       // Verify native editor edits just one field and returns to Canvas form.
       press(canvas,-105);
-      expect("register-field-0".equals(get(app,"mode")),"focus name only");
-      TextBox editor=(TextBox)get(app,"editor");editor.setString("Khang");
+      expect("register-field-0".equals(get(app,"mode")),"focus handle only");
+      TextBox editor=(TextBox)get(app,"editor");editor.setString("khazg");
       app.commandAction((Command)get(app,"save"),editor);
       expect(number(app,"tab")==10,"returns to form");
-      expect("Khang".equals(d[0]),"name retained");
+      expect("khazg".equals(d[0]),"handle retained");
       expect(number(app,"registerSelection")==1,"moves focus to next field");
       // Direct E72 keyboard typing without launching native editor.
-      press(canvas,'k');press(canvas,'h');press(canvas,'a');press(canvas,'z');press(canvas,'g');
-      expect("khazg".equals(d[1]),"direct QWERTY typing");
+      for(char c : "Secret123".toCharArray())press(canvas,(int)c);
+      expect("Secret123".equals(d[1]),"direct QWERTY typing into password");
       press(canvas,-102);expect(number(app,"registerSelection")==2,"navigation down");
-      submit(app);expect(number(app,"registerSelection")==2,"validation focuses email");
+      submit(app);expect(number(app,"registerSelection")==2,"validation focuses confirm password");
       expect(((String)get(app,"authError")).length()>0,"inline validation error");
       // Test that tiny window selected row is visible and action button is within card.
       Class<?> layoutCls=Class.forName("minisocial.MiniSocialMidlet$SocialCanvas$RegisterLayout");
       Method layout=canvas.getClass().getDeclaredMethod("registerLayout");layout.setAccessible(true);
-      for(int i=0;i<=6;i++){
+      for(int i=0;i<=4;i++){
         field(app,"registerSelection",Integer.valueOf(i));Object l=layout.invoke(canvas);
         int first=number(l,"first"),visible=number(l,"visible");
-        expect(first>=0&&visible>=1&&first+visible<=5,"registration scroll bounds");
-        if(i<5)expect(i>=first&&i<first+visible,"focused field visible at index "+i);
+        expect(first>=0&&visible>=1&&first+visible<=3,"registration scroll bounds");
+        if(i<3)expect(i>=first&&i<first+visible,"focused field visible at index "+i);
         int y=number(l,"y"),h=number(l,"h"),by=number(l,"submitY");
         expect(by>=y&&by<y+h,"button inside card");
       }
-      field(app,"registerSelection",Integer.valueOf(6));press(canvas,-105);
+      field(app,"registerSelection",Integer.valueOf(4));press(canvas,-105);
       expect(number(app,"tab")==0,"back to login");
-      expect("".equals(d[3])&&"".equals(d[4]),"passwords erased on exit");
+      expect("".equals(d[1])&&"".equals(d[2]),"passwords erased on exit");
     }
     System.out.println("PASS registration form, field editor, QWERTY, validation, scroll, return, secrets");
   }
