@@ -46,6 +46,10 @@ public final class Server {
         throw new Fault(410,"Khoi phuc mat khau: lien he quan tri vien MiniSocial");
       String me=authenticated(x);
       switch(path){
+        case "/m/account/delete": require(post);deleteAccount(x,f,me);break;
+        case "/m/storage": require(get);storage(x,me);break;
+        case "/m/storage/clear": require(post);clearMedia(x,f,me);break;
+        case "/m/history": require(get);history(x,q,me);break;
         case "/m/password/change": require(post);changePassword(x,f,me);break;
         case "/m/feed": require(get); feed(x,null);break;
         case "/m/profile":if(get)profile(x,q,me);else profileUpdate(x,f,me);break;
@@ -246,6 +250,60 @@ public final class Server {
     if(author!=null)path+="&author_id=eq."+author;
     List<String> lines=new ArrayList<>();for(Object o:Json.list(db.db("GET",path,null))){Map<String,Object>m=Json.map(o);lines.add(line(val(m,"id"),val(m,"author_id"),val(m,"display_name"),val(m,"created_at"),val(m,"likes_count"),val(m,"comments_count"),val(m,"body"),val(m,"media_id"),val(m,"device_model"),val(m,"avatar_media_id")));}rows(x,lines);
   }
+  /** Own liked/posted history, using the existing feed wire format. */
+  private void history(HttpExchange x,Map<String,String>q,String me)throws IOException{
+    String type=q.getOrDefault("type","liked");
+    String path;
+    if(type.equals("posted")){
+      path="feed_items?select=id,author_id,display_name,body,created_at,likes_count,comments_count,media_id,device_model,avatar_media_id&author_id=eq."+me+"&order=created_at.desc&limit=30";
+    }else if(type.equals("liked")){
+      List<Object> likes=Json.list(db.db("GET","post_likes?select=post_id&user_id=eq."+me+"&limit=30",null));
+      if(likes.isEmpty()){rows(x,Collections.emptyList());return;}
+      StringJoiner ids=new StringJoiner(",");
+      for(Object o:likes){String post=val(Json.map(o),"post_id");ids.add(id(post));}
+      path="feed_items?select=id,author_id,display_name,body,created_at,likes_count,comments_count,media_id,device_model,avatar_media_id&id=in.("+ids+")&order=created_at.desc&limit=30";
+    }else throw new Fault(400,"Unsupported history type");
+    List<String> entries=new ArrayList<>();
+    for(Object o:Json.list(db.db("GET",path,null))){Map<String,Object>m=Json.map(o);
+      entries.add(line(val(m,"id"),val(m,"author_id"),val(m,"display_name"),val(m,"created_at"),val(m,"likes_count"),val(m,"comments_count"),val(m,"body"),val(m,"media_id"),val(m,"device_model"),val(m,"avatar_media_id")));
+    }
+    rows(x,entries);
+  }
+  private void storage(HttpExchange x,String me)throws IOException{
+    Map<String,Object>p=Json.map(first(db.db("GET","profiles?select=storage_used_bytes,storage_limit_bytes&id=eq."+me+"&limit=1",null)));
+    if(p.isEmpty())throw new Fault(404,"Storage profile not found");
+    ok(x,Long.toString(number(p.get("storage_used_bytes"))),Long.toString(number(p.get("storage_limit_bytes"))));
+  }
+  /** Explicitly clear only images owned by caller; keep text, posts, messages and account. */
+  private void clearMedia(HttpExchange x,Map<String,String>f,String me)throws IOException{
+    if(!"CLEAR".equals(f.get("confirm")))throw new Fault(400,"Confirmation required");
+    int deleted=0;
+    for(int pass=0;pass<50;pass++){
+      List<Object> media=Json.list(db.db("GET","media_files?select=id,storage_path&owner_id=eq."+me+"&limit=100",null));
+      if(media.isEmpty()){ok(x,Integer.toString(deleted));return;}
+      for(Object o:media){Map<String,Object>item=Json.map(o);
+        String mediaId=id(val(item,"id")),path=val(item,"storage_path");
+        db.db("DELETE","media_files?id=eq."+mediaId+"&owner_id=eq."+me,null);
+        if(!path.isEmpty())db.deleteUpload(path);deleted++;
+      }
+    }
+    throw new Fault(503,"Too many images; continue deletion with another request");
+  }
+  /** Password verification and exact typed confirmation before permanent user deletion. */
+  private void deleteAccount(HttpExchange x,Map<String,String>f,String me)throws IOException{
+    if(!"DELETE".equals(f.get("confirm")))throw new Fault(400,"Confirmation required");
+    String current=password(f,"password");
+    checkRecoveryAttempts("account-delete:"+address(x)+":"+me,5);
+    try{db.verifyPassword(me,current);}catch(Supabase.Error e){
+      if(e.status==400||e.status==401||e.status==422)throw new Fault(401,"Incorrect account password");throw e;
+    }
+    List<String> mediaPaths=new ArrayList<>();
+    for(Object o:Json.list(db.db("GET","media_files?select=storage_path&owner_id=eq."+me+"&limit=10000",null)))
+      mediaPaths.add(val(Json.map(o),"storage_path"));
+    db.adminDeleteUser(me);sessions.entrySet().removeIf(e->e.getValue().id.equals(me));
+    for(String path:mediaPaths)if(!path.isEmpty())db.deleteUpload(path);
+    ok(x,"Account deleted");
+  }
   /** Device label is a user-supplied display hint, NEVER trusted identity or authentication. */
   private static String deviceModel(HttpExchange x){
     String raw=x.getRequestHeaders().getFirst("X-MiniSocial-Device");
@@ -271,8 +329,14 @@ public final class Server {
     if(m.isEmpty())throw new Fault(404,"Profile not found");ok(x,val(m,"id"),val(m,"display_name"),val(m,"handle"),val(m,"bio"),val(m,"created_at"),val(m,"avatar_media_id"));
   }
   private void profileUpdate(HttpExchange x,Map<String,String>f,String me)throws IOException{
-    String name=body(f,"name",50,true),bio=body(f,"bio",240,false);
-    db.db("PATCH","profiles?id=eq."+me,Map.of("display_name",name,"bio",bio));ok(x,"Updated");
+    Map<String,Object> changes=new LinkedHashMap<>();
+    if(f.containsKey("name")){
+      String name=body(f,"name",50,true);if(name.length()<2)throw new Fault(400,"Display name too short");
+      changes.put("display_name",name);
+    }
+    if(f.containsKey("bio"))changes.put("bio",body(f,"bio",240,false));
+    if(changes.isEmpty())throw new Fault(400,"No profile fields specified");
+    db.db("PATCH","profiles?id=eq."+me,changes);ok(x,"Updated");
   }
   private void post(HttpExchange x,Map<String,String>f,String me)throws IOException{
     String content=body(f,"body",500,false),media=f.getOrDefault("media","");if(content.isEmpty()&&media.isEmpty())throw new Fault(400,"Empty post");

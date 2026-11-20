@@ -25,7 +25,7 @@ public final class PasswordFormsSmoke {
       ok("change-field-1".equals(get(app,"mode")),"edit next password");
       TextBox editor=(TextBox)get(app,"editor");editor.setString("new_password_secret");app.commandAction((Command)get(app,"save"),editor);
       ok("new_password_secret".equals(change[1]),"new password held in RAM");
-      key(canvas,-7);ok(num(app,"tab")==2,"return to profile");
+      key(canvas,-7);ok(num(app,"tab")==14,"return to settings");
       ok("".equals(((String[])get(app,"changeFields"))[1]),"new password cleared");
     }
     System.out.println("PASS admin-managed recovery, password change, secret cleanup in 4 resolutions");

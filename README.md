@@ -1,3 +1,7 @@
+## MiniSocial v1.8.0 — 3 tab + Lucide-style Canvas + Tùy chọn Nokia
+
+**New:** Trang chủ / Chat / Bạn bè; phím mềm trái mở Tùy chọn (Cá nhân, Cài đặt, Lịch sử, Dung lượng), trong cuộc hội thoại mở ô Gửi; phím mềm phải Trở về/Thoát. Giao diện outline-icon vẽ bằng MIDP Canvas, hỗ trợ theme Sáng/Tối; API lịch sử, hạn mức dung lượng và xóa ảnh/tài khoản xác thực. Xem [HUONG-DAN-CAP-NHAT-v1.8.0.md](HUONG-DAN-CAP-NHAT-v1.8.0.md). Dữ liệu Supabase tiếp tục dùng schema v1.7, không có migration SQL mới.
+
 ## MiniSocial v1.7.0 — username/password + web admin + storage quota
 
 **New:** Register without real email/OTP; username login; `https://minisocial.xubi.org/admin` for administrator management and global/per-user content quotas. **Read [HUONG-DAN-CAP-NHAT-v1.7.0.md](HUONG-DAN-CAP-NHAT-v1.7.0.md) before deploying.** Back up MiniSocial Supabase, apply v1.6 migration first if needed, then `deploy/UPDATE-v1.7.0-ADMIN.sql`. The v1.7 admin `MINISOCIAL_ADMIN_PASSWORD` environment variable is mandatory. Existing email accounts are retained.

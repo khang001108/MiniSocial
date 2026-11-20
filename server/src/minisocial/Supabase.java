@@ -71,7 +71,17 @@ final class Supabase {
     if(!expectedId.equals(oldId))throw new Error(401,"Current password incorrect");
     updatePassword(jwt,next);
   }
-  void upload(String path,byte[] raw,String mime){call("POST","/storage/v1/object/minisocial-private/"+path,secret,secret,raw,mime,false);}
+  void verifyPassword(String expectedId,String password){
+    Object item=db("GET","profiles?select=auth_email&id=eq."+expectedId+"&limit=1",null);
+    List<Object> list=Json.list(item);
+    if(list.isEmpty())throw new Error(401,"Unknown account");
+    String email=Json.string(Json.map(list.get(0)).get("auth_email"));
+    if(email.isEmpty())throw new Error(401,"Account has no login identifier");
+    Object loginResponse=login(email,password);
+    String userId=Json.string(Json.map(Json.map(loginResponse).get("user")).get("id"));
+    if(!expectedId.equals(userId))throw new Error(401,"Incorrect password");
+  }
+    void upload(String path,byte[] raw,String mime){call("POST","/storage/v1/object/minisocial-private/"+path,secret,secret,raw,mime,false);}
   byte[] download(String path){return call("GET","/storage/v1/object/minisocial-private/"+path,secret,secret,null,null,false).body();}
   void deleteUpload(String path){try{call("DELETE","/storage/v1/object/minisocial-private/"+path,secret,secret,null,null,false);}catch(Exception ignore){}}
 }

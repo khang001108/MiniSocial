@@ -27,6 +27,7 @@ class Mock(BaseHTTPRequestHandler):
    if uid.startswith('eq.'):users=[u for u in users if u['id']==uid[3:]]
    offset=int(q.get('offset',['0'])[0]);self.send(200,users[offset:offset+int(q.get('limit',['100'])[0])]);return
   if p.path=='/rest/v1/media_files':self.send(200,[]);return
+  if p.path in ('/rest/v1/post_likes','/rest/v1/feed_items'):self.send(200,[]);return
   if p.path=='/auth/v1/user':
    user=next(iter(profiles.values()),None);self.send(200,{'id':user['id']} if user else {});return
   self.send(404,{'message':'missing'})
@@ -42,7 +43,7 @@ class Mock(BaseHTTPRequestHandler):
   if p.path=='/auth/v1/token':
    user=next((u for u in profiles.values() if u['auth_email']==data['email'] and passwords[u['id']]==data['password']),None)
    if not user:self.send(401,{'message':'invalid credentials'});return
-   self.send(200,{'access_token':'a.eyJpYXQiOjE3OTUyMzAwMDB9.signature-test-token','user':{'id':user['id']}});return
+   self.send(200,{'access_token':'a.eyJpYXQiOjE3OTUyMzAwMDB9.signature-test-token-'+user['id'],'user':{'id':user['id']}});return
   self.send(404,{'message':'missing'})
  def do_PATCH(self):
   n=int(self.headers.get('content-length','0'));data=json.loads(self.rfile.read(n) or '{}')
@@ -85,7 +86,17 @@ try:
  assert req('/m/register',{'handle':'khazg','password':'12345678'})[0]==200
  assert len(profiles)==1
  assert req('/m/register',{'handle':'khazg','password':'12345678'})[0]==409
- assert req('/m/login',{'handle':'khazg','password':'12345678'})[0]==200
+ code,_,login_body=req('/m/login',{'handle':'khazg','password':'12345678'})
+ assert code==200
+ session_token=urllib.parse.unquote_plus(login_body.split('|')[2]);mobile_headers={'Authorization':'Bearer '+session_token}
+ assert req('/m/storage',headers=mobile_headers)[0]==200
+ assert '52428800' in req('/m/storage',headers=mobile_headers)[2]
+ assert req('/m/history?type=liked',headers=mobile_headers)[0]==200
+ assert req('/m/history?type=posted',headers=mobile_headers)[0]==200
+ assert req('/m/storage/clear',{},headers=mobile_headers)[0]==400
+ assert req('/m/storage/clear',{'confirm':'CLEAR'},headers=mobile_headers)[0]==200
+ assert req('/m/account/delete',{'password':'12345678'},headers=mobile_headers)[0]==400
+ assert req('/m/account/delete',{'password':'wrong-password','confirm':'DELETE'},headers=mobile_headers)[0]==401
  assert req('/admin/api/data')[0]==401
  assert req('/admin/api/login',{'username':'admin','password':'bad'})[0]==401
  stat,head,body=req('/admin/api/login',{'username':'admin','password':env['MINISOCIAL_ADMIN_PASSWORD']})
@@ -113,7 +124,18 @@ try:
  assert passwords[uid]=='newpassword123'
  assert req('/admin/api/delete',{'id':uid,'confirm':'DELETE'},headers=data_headers)[0]==200
  assert not profiles
- print('PASS mock Supabase: username registration/login, duplicate handle, admin login/cookie/CSRF, suspend, quotas, reset, delete')
+ # A fresh account may permanently delete itself only after password verification.
+ assert req('/admin/api/registration',{'enabled':'true'},headers=data_headers)[0]==200
+ assert req('/m/register',{'handle':'selfdelete','password':'goodpassword123'})[0]==200
+ stat,_,reply=req('/m/login',{'handle':'selfdelete','password':'goodpassword123'})
+ assert stat==200
+ own_token=urllib.parse.unquote_plus(reply.split('|')[2]);own_headers={'Authorization':'Bearer '+own_token}
+ assert req('/m/account/delete',{'password':'invalidpassword','confirm':'DELETE'},headers=own_headers)[0]==401
+ assert len(profiles)==1
+ status,_,response=req('/m/account/delete',{'password':'goodpassword123','confirm':'DELETE'},headers=own_headers)
+ assert status==200,(status,response)
+ assert not profiles
+ print('PASS mock Supabase: username/auth, storage, history, confirmed self-delete, admin management')
 finally:
  proc.terminate()
  try:proc.communicate(timeout=5)
