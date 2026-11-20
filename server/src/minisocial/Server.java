@@ -13,6 +13,10 @@ public final class Server {
   private static final String UTF8="UTF-8";
   private final Supabase db=new Supabase();
   private final ConcurrentHashMap<String,Session> sessions=new ConcurrentHashMap<>();
+  // Bound recovery abuse; throttles are additive to Supabase's own limits.
+  private final ConcurrentHashMap<String,Long> recoveryRequests=new ConcurrentHashMap<>();
+  private final ConcurrentHashMap<String,Attempt> recoveryAttempts=new ConcurrentHashMap<>();
+  private static final class Attempt {long until;int count;Attempt(long now){until=now+600000;count=0;}}
   private static final class Session {final String id; final long until;Session(String id,long until){this.id=id;this.until=until;}}
   private static final class Fault extends RuntimeException{final int status;Fault(int s,String m){super(m);status=s;}}
   public static void main(String[] args)throws Exception{new Server().start();}
@@ -36,8 +40,11 @@ public final class Server {
       Map<String,String> f=post&&!path.equals("/m/upload")?parse(new String(readLimit(x.getRequestBody(),32768),StandardCharsets.UTF_8)):Collections.emptyMap();
       if(path.equals("/m/register")&&post){registration(x,f);return;}
       if(path.equals("/m/login")&&post){login(x,f);return;}
+      if(path.equals("/m/password/recover")&&post){sendRecovery(x,f);return;}
+      if(path.equals("/m/password/reset")&&post){resetPassword(x,f);return;}
       String me=authenticated(x);
       switch(path){
+        case "/m/password/change": require(post);changePassword(x,f,me);break;
         case "/m/feed": require(get); feed(x,null);break;
         case "/m/profile":if(get)profile(x,q,me);else profileUpdate(x,f,me);break;
         case "/m/profileposts":require(get);feed(x,id(q.getOrDefault("user",me)));break;
@@ -112,6 +119,67 @@ public final class Server {
   private void login(HttpExchange x,Map<String,String> f)throws IOException{
     Object obj=db.login(body(f,"email",140,true),body(f,"password",128,true));Map<String,Object> a=Json.map(obj);String token=val(a,"access_token");if(token.length()<20)throw new Fault(401,"Login failed");
     String user=val(Json.map(a.get("user")),"id");ok(x,user,token);
+  }
+  private static boolean validEmail(String email){
+    return email.length()>5&&email.length()<141&&email.indexOf('@')>0&&email.indexOf('.')>email.indexOf('@')+1&&email.indexOf(' ')<0;
+  }
+  private static String password(Map<String,String>form,String key){
+    String v=form.getOrDefault(key,"");
+    if(v.length()<8||v.length()>128)throw new Fault(400,"Password requires at least 8 characters");
+    return v;
+  }
+  private static String address(HttpExchange x){
+    return x.getRemoteAddress().getAddress().getHostAddress();
+  }
+  private void sendRecovery(HttpExchange x,Map<String,String> f)throws IOException{
+    String email=body(f,"email",140,true).toLowerCase(Locale.ROOT);
+    if(!validEmail(email))throw new Fault(400,"Invalid email");
+    long now=System.currentTimeMillis();
+    if(recoveryRequests.size()>4000)recoveryRequests.entrySet().removeIf(e->e.getValue()+600000<now);
+    // Per-email 60s cooldown, plus a broad per-source limit. Do not block every
+    // person on a reverse proxy just because another person sent one email.
+    String mail="mail:"+email;
+    Long last=recoveryRequests.get(mail);
+    if(last!=null&&now-last<60000)throw new Fault(429,"Wait 60 seconds before another OTP");
+    checkRecoveryAttempts("send-ip:"+address(x),50);
+    recoveryRequests.put(mail,now);
+    try{db.sendRecovery(email);}
+    catch(Supabase.Error ex){
+      if(ex.status==429)throw new Fault(429,"Email rate limit; try later");
+      // Do not disclose whether an email belongs to a MiniSocial account.
+      if(ex.status>=500)throw new Fault(503,"Recovery email service temporarily unavailable");
+      // Auth may return a generic error for non-existent users. Avoid enumeration.
+    }
+    ok(x,"If this email is registered, a recovery code has been sent");
+  }
+  private void checkRecoveryAttempts(String key,int maxTries){
+    long now=System.currentTimeMillis();
+    if(recoveryAttempts.size()>4000)recoveryAttempts.entrySet().removeIf(e->e.getValue().until<now);
+    Attempt a=recoveryAttempts.computeIfAbsent(key,k->new Attempt(now));
+    synchronized(a){if(a.until<now){a.until=now+600000;a.count=0;}if(++a.count>maxTries)throw new Fault(429,"Too many tries; wait 10 minutes");}
+  }
+  private void resetPassword(HttpExchange x,Map<String,String>f)throws IOException{
+    String email=body(f,"email",140,true).trim().toLowerCase(Locale.ROOT);
+    String code=body(f,"otp",12,true),next=password(f,"password");
+    if(!validEmail(email)||!code.matches("[0-9]{6}"))throw new Fault(400,"Email or 6-digit code invalid");
+    checkRecoveryAttempts("verify-ip:"+address(x),100);checkRecoveryAttempts("verify-mail:"+email,6);
+    try{db.resetPassword(email,code,next);}catch(Supabase.Error e){
+      if(e.status>=500)throw new Fault(503,"Authentication service unavailable");
+      if(e.status==429)throw new Fault(429,"Please try later");
+      throw new Fault(400,"Invalid/expired OTP or password policy error");
+    }
+    recoveryAttempts.remove("verify-mail:"+email);
+    ok(x,"Password reset successfully");
+  }
+  private void changePassword(HttpExchange x,Map<String,String> f,String me)throws IOException{
+    String current=f.getOrDefault("current", ""),next=password(f,"password");
+    if(current.length()==0||current.length()>128)throw new Fault(400,"Invalid current password");
+    if(current.equals(next))throw new Fault(400,"New password must be different");
+    String bearer=x.getRequestHeaders().getFirst("Authorization");
+    if(bearer==null||!bearer.startsWith("Bearer "))throw new Fault(401,"Please log in");
+    db.changePassword(bearer.substring(7),current,next,me);
+    sessions.remove(bearer.substring(7));
+    ok(x,"Password changed");
   }
   private void feed(HttpExchange x,String author)throws IOException{
     String path="feed_items?select=id,author_id,display_name,body,created_at,likes_count,comments_count,media_id&order=created_at.desc&limit=15";

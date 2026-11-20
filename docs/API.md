@@ -37,3 +37,14 @@ This API is intentionally tiny for Java ME (no JSON parser needed on the handset
 - Storage objects are private (`minisocial-private` bucket). The server uses the Supabase secret key only from its own environment.
 
 Server access tokens are checked against `/auth/v1/user`, with at most 30 seconds of successful authentication cache for scalability. There is no refresh-token endpoint in this MVP; users log in again after expiry.
+
+
+## Xác thực tài khoản v1.5.0 — OTP và đổi mật khẩu
+
+Các endpoint nhận form `application/x-www-form-urlencoded` (URL-encoded UTF-8), trả `OK|...` hoặc `ERR|...` theo giao thức hiện có.
+
+- `POST /m/password/recover` — `email=...`; KHÔNG cần đăng nhập; gửi yêu cầu Supabase Recovery email. Luôn dùng thông điệp chung để không lộ địa chỉ có tài khoản hay không; giới hạn tối thiểu 60 giây giữa hai lần cùng email.
+- `POST /m/password/reset` — `email=...&otp=123456&password=...`; KHÔNG cần đăng nhập nhưng bắt buộc mã recovery OTP do Supabase cấp. Mã OTP được xác minh bằng `/auth/v1/verify` loại `recovery`; sau đó backend dùng JWT recovery để đặt mật khẩu mới. 6 lần thử/email/10 phút trên cùng một instance.
+- `POST /m/password/change` — `current=...&password=...`; YÊU CẦU `Authorization: Bearer <access_token>`. Backend kiểm tra phiên JWT và mật khẩu hiện tại bằng Supabase Auth trước khi đổi. Ứng dụng đăng xuất sau khi thành công.
+
+Không truyền mật khẩu qua HTTP công khai; chỉ dùng `https://minisocial.xubi.org` ngoài mạng LAN. Các giới hạn trong RAM reset khi server khởi động, ngoài giới hạn của Supabase. Không gửi/ghi log email, OTP, password hoặc Supabase secret key.

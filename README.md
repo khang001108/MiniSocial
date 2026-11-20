@@ -1,10 +1,32 @@
-# MiniSocial 1.2.0 — Green/Teal UI + Server Selection + Xubi + Supabase
+# MiniSocial v1.5.0 — Email OTP & đổi mật khẩu
+
+- **Quên mật khẩu:** Email → OTP 6 chữ số → mật khẩu mới, Supabase tạo và xác minh OTP. Ứng dụng không lưu OTP/mật khẩu vào RMS.
+- **Đổi mật khẩu sau đăng nhập:** Vào Hồ sơ → nhấn phím **8**, nhập mật khẩu hiện tại, mật khẩu mới và xác nhận.
+- Backend bổ sung `/m/password/recover`, `/m/password/reset`, `/m/password/change`. Không thêm SQL, không thêm Environment.
+- **BẮT BUỘC:** Supabase → Authentication → Email Templates → **Reset Password/Recovery**: thêm `{{ .Token }}` để email có mã OTP. Xem `docs/PASSWORD-OTP-v1.5.0.md`.
+- Không cần email xác nhận để đăng ký nếu bạn đã tắt Confirm email; OTP khôi phục vẫn yêu cầu nhận email thật.
+
+---
+
+# MiniSocial 1.5.0 — Modern Login / Signup Forms + Green UI + Xubi + Supabase
 
 Standalone MVP, created from four supplied Nokia-style mockups (feed, user profile, chat and photo viewer).
 The interface is **code-rendered**, not a screenshot, so it can respond to the E72 keyboard and a responsive Canvas.
 
 **IMPORTANT TEST LIMITATION:** The Java ME client has been compiled, converted to CLDC 1.1 class version 45.3, and structurally checked using OpenJDK's verifier. The build includes converted CLDC `StackMap` attributes. The v1.2 layout has been exercised with a desktop-only Canvas geometry smoke test for all four target sizes (not a Java ME emulator). **It has NOT been installed on a real Nokia E72 or run against a real Supabase project.** Nokia Java ME HTTPS certificate/TLS support may require additional work. Do not claim E72 installation or end-to-end operation is already confirmed.
 
+
+## Form đăng nhập / đăng ký v1.4.0
+
+- Màn hình đăng nhập dùng một thẻ rộng, hai ô tài khoản/email và mật khẩu, ba liên kết nhỏ **Máy chủ · Tạo tài khoản · Thông tin**.
+- Mục **Tạo tài khoản** mở **một form duy nhất** gồm: tên hiển thị, tên tài khoản (handle), email, mật khẩu và nhập lại mật khẩu; nút **Đăng ký** ở cuối. Không còn chuỗi 4 hộp thoại tự mở liên tiếp.
+- Phím **↑/↓** thay đổi ô chọn; **OK** chỉnh sửa ô hoặc gửi form; phím chữ/số QWERTY có thể gõ trực tiếp vào Canvas khi chọn trường. Với trình giả lập hoặc thiết bị yêu cầu IME, OK mở trình biên tập văn bản gốc cho **một trường**, rồi trở lại form với các trường khác vẫn giữ nguyên.
+- Màn hình ngang 320×240 chỉ hiển thị một phần các trường và tự cuộn theo ô đang chọn. 240×320, 360×640, 640×480 dùng bố cục phù hợp.
+- Form kiểm tra dữ liệu trên thiết bị trước khi gửi API; thông báo lỗi ở đầu form, chỉ rõ trường cần sửa. Xác nhận mật khẩu chỉ dùng ở client, không gửi lên server.
+- Mật khẩu đăng nhập và đăng ký giữ tạm trong RAM, không lưu RMS; mật khẩu đăng ký bị xóa sau khi gửi hoặc rời form.
+- Giữ nguyên backend Java 17, Supabase, Dockerfile và Docker Host/Container port 18087→8080.
+
+**Giới hạn Java ME:** Không thể nhúng `TextField` của MIDP vào `Canvas` tùy biến như DOM của trình duyệt. Khi cần bàn phím hệ thống có IME, người dùng vẫn có thể thấy trình soạn thảo văn bản của điện thoại **chỉ cho ô đang chọn**. Không còn quy trình hỏi từng mục một cách tự động.
 
 ## Giao diện đăng nhập mới (v1.3.0)
 

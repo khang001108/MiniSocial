@@ -17,12 +17,28 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
     private int serverMode=0,serverSelection=0,welcomeSelection=0;
     // Login form fields are held in RAM only. Password is never written to RMS.
     private String loginEmail="", loginPassword="";
+    // Registration is a persistent Canvas form, not a sequence of pop-up prompts.
+    // Password and confirmation remain in RAM only and are erased on submit/exit.
+    private String[] registerFields={"","","","",""};
+    private int registerSelection=0;
+    // Password recovery: a four-field form, no password/OTP persisted in RMS.
+    private String[] recoveryFields={"","","",""}; // email, 6-digit OTP, password, confirm
+    private int recoverySelection=0;
+    private boolean recoverySent=false;
+    // Change password from your own profile, current password always required.
+    private String[] changeFields={"","" ,""}; // current, new, confirm
+    private int changeSelection=0;
+    private static final String[] RECOVERY_LABELS={"Email", "Mã OTP (6 số)", "Mật khẩu mới", "Xác nhận mật khẩu"};
+    private static final String[] CHANGE_LABELS={"Mật khẩu hiện tại", "Mật khẩu mới", "Nhập lại mật khẩu"};
+    private String authError="";
+    private int registerErrorField=-1,loginErrorField=-1;
+    private static final String[] REG_LABELS={"Tên hiển thị","Tên tài khoản","Email","Mật khẩu","Nhập lại mật khẩu"};
+    private static final String[] REG_HINTS={"Tên của bạn","a-z, 0-9, _","email@example.com","Tối thiểu 8 ký tự","Xác nhận mật khẩu"};
     private int navSelection=0;
     private boolean navFocus=false;
     private String token="", me="", myName="";
     private TextBox editor;private final Command save=new Command("OK",Command.OK,1),cancel=new Command("Huy",Command.CANCEL,2);
     private String mode="", target="",pendingMedia="";
-    private int entryStep=0; private String[] entry=new String[4];
     private boolean busy=false;private String notification="";
     private Vector feed=new Vector(),profilePosts=new Vector(), friends=new Vector(),incoming=new Vector(),messages=new Vector(),comments=new Vector();
     private String peer="",peerName="",profileId="",profileName="",profileHandle="",profileBio="";
@@ -165,7 +181,105 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
     private void edit(String m,String title,int constraints){mode=m;editor=new TextBox(title,"",500,constraints);editor.addCommand(save);editor.addCommand(cancel);editor.setCommandListener(this);display.setCurrent(editor);}
     private void auth(boolean signup){
         if(!signup){editLogin(true);return;}
-        entryStep=0;entry=new String[4];edit("register","Ten hien thi",TextField.ANY);
+        tab=10;registerSelection=0;registerErrorField=-1;authError="";notification="";
+        screen.repaint();
+    }
+    private void editRegisterField(int index){
+        if(index<0||index>=REG_LABELS.length)return;
+        registerSelection=index;
+        mode="register-field-"+index;
+        int constraints=index==2?TextField.EMAILADDR:(index>=3?TextField.ANY|TextField.PASSWORD:TextField.ANY);
+        int limit=index==0?50:index==1?24:index==2?140:128;
+        editor=new TextBox(REG_LABELS[index],registerFields[index],limit,constraints);
+        editor.addCommand(save);editor.addCommand(cancel);editor.setCommandListener(this);
+        display.setCurrent(editor);
+    }
+    private void failRegistration(int field,String reason){
+        registerSelection=field;registerErrorField=field;authError=reason;screen.repaint();
+    }
+    private void submitRegistration(){
+        String name=registerFields[0].trim(),handle=registerFields[1].trim().toLowerCase(),email=registerFields[2].trim();
+        String pass=registerFields[3],confirm=registerFields[4];
+        if(name.length()==0||name.length()>50){failRegistration(0,"Nhập tên hiển thị (1-50 ký tự)");return;}
+        if(handle.length()<3||handle.length()>24){failRegistration(1,"Tên tài khoản: 3-24 ký tự");return;}
+        for(int i=0;i<handle.length();i++){
+            char c=handle.charAt(i);
+            if(!((c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='_')){
+                failRegistration(1,"Tên tài khoản: a-z, 0-9, _");return;
+            }
+        }
+        if(email.indexOf('@')<=0||email.indexOf('.',email.indexOf('@'))<0){failRegistration(2,"Email không hợp lệ");return;}
+        if(pass.length()<8){failRegistration(3,"Mật khẩu phải có ít nhất 8 ký tự");return;}
+        if(!pass.equals(confirm)){failRegistration(4,"Hai mật khẩu không trùng nhau");return;}
+        final String req="name="+encode(name)+"&handle="+encode(handle)+"&email="+encode(email)+"&password="+encode(pass);
+        registerFields[3]="";registerFields[4]="";authError="";registerErrorField=-1;
+        final String validEmail=email;
+        work(new Task(){public void run()throws Exception{
+            single("/m/register",req);
+            for(int i=0;i<registerFields.length;i++)registerFields[i]="";
+            loginEmail=validEmail;loginPassword="";
+            welcomeSelection=1;tab=0;
+            notification="Đã đăng ký. Kiểm tra email xác nhận nếu được yêu cầu.";
+        }});
+    }
+    private void openRecovery(){
+        if(busy)return;
+        recoveryFields=new String[]{loginEmail.trim(),"","",""};recoverySent=false;recoverySelection=0;
+        authError="";notification="";tab=11;screen.repaint();
+    }
+    private void openChange(){
+        if(token.length()==0)return;
+        changeFields=new String[]{"","",""};changeSelection=0;authError="";notification="";tab=12;screen.repaint();
+    }
+    private void editPasswordField(boolean recovery,int index){
+        String[] fields=recovery?recoveryFields:changeFields;
+        String[] labels=recovery?RECOVERY_LABELS:CHANGE_LABELS;
+        if(index<0||index>=fields.length)return;
+        if(recovery)recoverySelection=index;else changeSelection=index;
+        mode=(recovery?"recovery-field-":"change-field-")+index;
+        int constraint=(recovery&&index==0)?TextField.EMAILADDR:((recovery&&index==1)?TextField.ANY:(TextField.ANY|TextField.PASSWORD));
+        editor=new TextBox(labels[index],fields[index],(recovery&&index==1)?6:((recovery&&index==0)?140:128),constraint);
+        editor.addCommand(save);editor.addCommand(cancel);editor.setCommandListener(this);display.setCurrent(editor);
+    }
+    private boolean validAddress(String email){
+        int at=email.indexOf('@');return at>0&&at<email.length()-3&&email.indexOf('.',at)>at+1&&email.indexOf(' ')<0;
+    }
+    private void sendRecoveryCode(){
+        final String email=recoveryFields[0].trim();
+        if(!validAddress(email)){authError="Nhập email hợp lệ";recoverySelection=0;screen.repaint();return;}
+        authError="";notification="";
+        work(new Task(){public void run()throws Exception{
+            single("/m/password/recover","email="+encode(email));
+            recoverySent=true;recoverySelection=1;
+            notification="Nếu email đã đăng ký, mã OTP sẽ được gửi.";
+        }});
+    }
+    private void finishRecovery(){
+        final String email=recoveryFields[0].trim(),otp=recoveryFields[1].trim();
+        final String next=recoveryFields[2],confirm=recoveryFields[3];
+        if(!validAddress(email)){authError="Nhập email hợp lệ";recoverySelection=0;screen.repaint();return;}
+        if(otp.length()!=6){authError="Nhập mã OTP 6 số";recoverySelection=1;screen.repaint();return;}
+        for(int i=0;i<6;i++)if(otp.charAt(i)<'0'||otp.charAt(i)>'9'){authError="OTP phải gồm 6 chữ số";recoverySelection=1;screen.repaint();return;}
+        if(next.length()<8){authError="Mật khẩu cần ít nhất 8 ký tự";recoverySelection=2;screen.repaint();return;}
+        if(!next.equals(confirm)){authError="Hai mật khẩu không trùng";recoverySelection=3;screen.repaint();return;}
+        recoveryFields[2]="";recoveryFields[3]="";authError="";
+        work(new Task(){public void run()throws Exception{
+            single("/m/password/reset","email="+encode(email)+"&otp="+encode(otp)+"&password="+encode(next));
+            recoveryFields=new String[]{"","","",""};recoverySent=false;loginEmail=email;loginPassword="";
+            authError="";tab=0;welcomeSelection=1;notification="Đã đổi mật khẩu. Hãy đăng nhập.";
+        }});
+    }
+    private void finishChange(){
+        final String old=changeFields[0],next=changeFields[1],confirm=changeFields[2];
+        if(old.length()==0){authError="Nhập mật khẩu cũ";changeSelection=0;screen.repaint();return;}
+        if(next.length()<8){authError="Mật khẩu mới cần ít nhất 8 ký tự";changeSelection=1;screen.repaint();return;}
+        if(next.equals(old)){authError="Mật khẩu mới phải khác mật khẩu cũ";changeSelection=1;screen.repaint();return;}
+        if(!next.equals(confirm)){authError="Hai mật khẩu không trùng";changeSelection=2;screen.repaint();return;}
+        changeFields=new String[]{"","",""};authError="";
+        work(new Task(){public void run()throws Exception{
+            single("/m/password/change","current="+encode(old)+"&password="+encode(next));
+            logout();notification="Đã đổi mật khẩu. Hãy đăng nhập lại.";
+        }});
     }
     private void editLogin(boolean email){
         mode=email?"login-email":"login-password";
@@ -175,8 +289,9 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
     }
     private void submitLogin(){
         final String email=loginEmail.trim(),pass=loginPassword;
-        if(email.length()==0||email.indexOf('@')<1){notification="Nhập email tài khoản";screen.repaint();return;}
-        if(pass.length()==0){notification="Nhập mật khẩu";screen.repaint();return;}
+        if(email.length()==0||email.indexOf('@')<1){authError="Nhập email tài khoản";loginErrorField=0;screen.repaint();return;}
+        if(pass.length()==0){authError="Nhập mật khẩu";loginErrorField=1;screen.repaint();return;}
+        authError="";loginErrorField=-1;
         // Do not keep the password after launching the login request.
         loginPassword="";
         work(new Task(){public void run()throws Exception{
@@ -189,10 +304,23 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         if(selected.equals("login-email")||selected.equals("login-password")){
             if(selected.equals("login-email")){loginEmail=value.trim();welcomeSelection=1;}
             else{loginPassword=value;welcomeSelection=2;}
+            authError="";loginErrorField=-1;notification="";
             display.setCurrent(screen);screen.repaint();return;
         }
-        if(selected.equals("register")){entry[entryStep++]=value;if(entryStep<4){String[]names={"Ten hien thi","Tai khoan (@handle)","Email","Mat khau (>=8)"};edit("register",names[entryStep],entryStep==3?TextField.ANY|TextField.PASSWORD:TextField.ANY);return;}
-            display.setCurrent(screen);final String[]a=entry;work(new Task(){public void run()throws Exception{single("/m/register","name="+encode(a[0])+"&handle="+encode(a[1])+"&email="+encode(a[2])+"&password="+encode(a[3]));notification="Da dang ky, hay xac nhan email va dang nhap";tab=0;}});return;}
+        if(selected.startsWith("register-field-")){
+            int i=Integer.parseInt(selected.substring("register-field-".length()));
+            registerFields[i]=i==1?value.trim().toLowerCase():value;
+            registerSelection=Math.min(5,i+1);
+            authError="";registerErrorField=-1;notification="";
+            display.setCurrent(screen);screen.repaint();return;
+        }
+        if(selected.startsWith("recovery-field-")||selected.startsWith("change-field-")){
+            boolean rec=selected.startsWith("recovery-field-");
+            int i=Integer.parseInt(selected.substring(rec?"recovery-field-".length():"change-field-".length()));
+            if(rec){recoveryFields[i]=value;recoverySelection=(i==3?5:i+1);}
+            else{changeFields[i]=value;changeSelection=Math.min(3,i+1);}
+            authError="";notification="";display.setCurrent(screen);screen.repaint();return;
+        }
         if(selected.startsWith("server-")){
             try{
                 int idx=selected.equals("server-public")?0:selected.equals("server-lan")?1:2;
@@ -283,6 +411,8 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             txt(g,clock(),0xD6FFE9,max(pad+10,cw-pad-small.stringWidth(clock())),max(3,(headerH-small.getHeight())/2),small);
             if(tab==8)drawServer(g);
             else if(tab==9)drawInfo(g);
+            else if(tab==10)drawRegister(g);
+            else if(tab==11||tab==12)drawPasswordForm(g,tab==11);
             else if(token.length()==0)drawWelcome(g);
             else if(tab==5)photoView(g);
             else{
@@ -294,14 +424,14 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 else if(tab==6)drawComments(g);
                 else if(tab==7)drawRequests(g);
             }
-            if(busy||notification!=null&&notification.length()>0){
+            if((tab!=0&&tab!=10&&tab!=11&&tab!=12)&&(busy||notification!=null&&notification.length()>0)){
                 int messageH=large?24:16;
                 fill(g,busy?0xFFF1CE:0xD9F6E6,0,ch-footerH-messageH,cw,messageH);
                 txt(g,trim(busy?"Dang tai...":notification,cw-2*pad,small),busy?0x734A0A:DARK,pad,ch-footerH-messageH+2,small);
             }
             grad(g,ch-footerH,footerH);
-            txt(g,tab==8?"Sua (#)":tab==9?"Thông tin":token.length()==0?"OK: Chon":"Tuy chon",0xFFFFFF,pad+3,ch-footerH+max(2,(footerH-bold.getHeight())/2),bold);
-            String back=(tab==9?"Trở lại":token.length()==0&&tab!=8?"Máy chủ":"Quay lại");
+            txt(g,tab==8?"Sửa (#)":tab==9?"Thông tin":tab==10||tab==11||tab==12?"OK: Chọn":token.length()==0?"OK: Chọn":"Tùy chọn",0xFFFFFF,pad+3,ch-footerH+max(2,(footerH-bold.getHeight())/2),bold);
+            String back=(tab==10||tab==11?"Đăng nhập":tab==12?"Hồ sơ":tab==9?"Trở lại":token.length()==0&&tab!=8?"Máy chủ":"Quay lại");
             txt(g,back,0xFFFFFF,cw-pad-3-bold.stringWidth(back),ch-footerH+max(2,(footerH-bold.getHeight())/2),bold);
         }
         /** Compact, responsive web-style login card, rendered without PNG assets. */
@@ -311,7 +441,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         }
         private LoginLayout loginLayout(){
             LoginLayout q=new LoginLayout();
-            q.w=min(cw-2*(pad+5),cw>=480?394:420);
+            q.w=min(cw-2*(pad+5),cw>=480?520:420);
             q.x=(cw-q.w)/2;
             int room=ch-headerH-footerH-6;
             boolean tight=room<220;
@@ -330,6 +460,17 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             q.buttonY=q.field2Y+q.fieldH+(tight?7:large?15:10);
             q.linksY=q.buttonY+q.buttonH+(tight?8:large?14:12);
             q.h=q.linksY+small.getHeight()+(tight?9:large?22:15);
+            if(!tight&&authError.length()>0&&loginErrorField>=0){
+                int gap=small.getHeight()+4;
+                if(loginErrorField==0){q.label2Y+=gap;q.field2Y+=gap;}
+                q.buttonY+=gap;q.linksY+=gap;q.h+=gap;
+            }
+            // Show validation errors INSIDE the card even at 320x240.
+            if(tight&&(authError.length()>0||notification.length()>0)){
+                int extra=9;
+                q.label1Y+=extra;q.field1Y+=extra;q.label2Y+=extra;
+                q.field2Y+=extra;q.buttonY+=extra;q.linksY+=extra;q.h+=extra;
+            }
             // On very short viewports, use all the remaining safe space.
             if(q.h>room-5)q.h=room-5;
             q.y=headerH+max(3,(room-q.h)/2);
@@ -350,18 +491,28 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             int inner=q.x+max(9,q.w/19),width=q.w-2*max(9,q.w/19);
             // Small highlight bar above the login form.
             fill(g,GREEN,inner,q.y+3,min(45,width/4),3);
-            txt(g,"MiniSocial",DARK,inner,q.y+q.titleY,bold);
+            txt(g,"Chào mừng trở lại",DARK,inner,q.y+q.titleY,bold);
             boolean tight=ch-headerH-footerH-6<220;
-            if(!tight)txt(g,"Đăng nhập để kết nối bạn bè",MUTED,inner,q.y+q.subY,small);
+            String loginStatus=(authError.length()>0&&(ch-headerH-footerH-6<220))?authError:notification;
+            if(!tight||loginStatus.length()>0)
+                txt(g,trim(loginStatus.length()>0?loginStatus:"Đăng nhập để kết nối bạn bè",width,small),loginStatus.length()>0?0xB14830:MUTED,inner,q.y+q.subY,small);
             txt(g,"Tài khoản / Email",MUTED,inner,q.y+q.label1Y,small);
             fill(g,welcomeSelection==0?0xE3FFF3:0xF5FAF9,inner,q.y+q.field1Y,width,q.fieldH);
             g.setColor(welcomeSelection==0?GREEN:0xAACCC2);g.drawRect(inner,q.y+q.field1Y,width-1,q.fieldH-1);
             txt(g,trim(loginEmail.length()>0?loginEmail:"Nhập email của bạn",width-18,normal),loginEmail.length()>0?TEXT:0x77988E,inner+8,q.y+q.field1Y+max(2,(q.fieldH-normal.getHeight())/2),normal);
+            if(!tight&&authError.length()>0&&loginErrorField==0)
+                txt(g,trim(authError,width,small),0xB14830,inner,q.y+q.field1Y+q.fieldH+2,small);
             txt(g,"Mật khẩu",MUTED,inner,q.y+q.label2Y,small);
+            String lost="Quên mật khẩu?";
+            int lostX=inner+width-small.stringWidth(lost)-2;
+            txt(g,lost,welcomeSelection==6?SKY:GREEN_DEEP,lostX,q.y+q.label2Y,small);
+            if(welcomeSelection==6)fill(g,SKY,lostX,q.y+q.label2Y+small.getHeight(),small.stringWidth(lost),1);
             fill(g,welcomeSelection==1?0xE3FFF3:0xF5FAF9,inner,q.y+q.field2Y,width,q.fieldH);
             g.setColor(welcomeSelection==1?GREEN:0xAACCC2);g.drawRect(inner,q.y+q.field2Y,width-1,q.fieldH-1);
             String mask="";for(int i=0;i<min(16,loginPassword.length());i++)mask+="*";
             txt(g,mask.length()>0?mask:"Nhập mật khẩu",mask.length()>0?TEXT:0x77988E,inner+8,q.y+q.field2Y+max(2,(q.fieldH-normal.getHeight())/2),normal);
+            if(!tight&&authError.length()>0&&loginErrorField==1)
+                txt(g,trim(authError,width,small),0xB14830,inner,q.y+q.field2Y+q.fieldH+2,small);
             fill(g,welcomeSelection==2?SKY:GREEN_DEEP,inner,q.y+q.buttonY,width,q.buttonH);
             if(welcomeSelection==2){g.setColor(0xFFFFFF);g.drawRect(inner+2,q.y+q.buttonY+2,max(0,width-5),max(0,q.buttonH-5));}
             String button="Đăng nhập";
@@ -373,13 +524,142 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 if(welcomeSelection==i+3)fill(g,SKY,q.linkX[i]+3,q.y+q.linksY+small.getHeight()+1,max(2,q.linkW[i]-6),1);
             }
         }
+        /** Compact registration form: all five fields stay in one screen, with scroll on tiny Nokia displays. */
+        private final class RegisterLayout {
+            int x,y,w,h,inner,width,rowY,rowH,first,visible,submitY,buttonH,linkY;
+        }
+        private RegisterLayout registerLayout(){
+            RegisterLayout q=new RegisterLayout();
+            q.w=min(cw-2*(pad+5),cw>=480?520:420);
+            q.x=(cw-q.w)/2;
+            int room=ch-headerH-footerH-8;
+            q.h=max(95,room-4);
+            q.y=headerH+max(3,(room-q.h)/2);
+            int inset=max(9,q.w/20);q.inner=q.x+inset;q.width=q.w-2*inset;
+            q.rowY=q.y+(ch<300?bold.getHeight()+21:bold.getHeight()+small.getHeight()+18);
+            q.rowH=large?52:narrow?35:26;
+            q.buttonH=large?38:27;
+            q.linkY=q.y+q.h-small.getHeight()-8;
+            q.submitY=q.linkY-q.buttonH-6;
+            int errorGap=authError.length()>0&&registerErrorField>=0?small.getHeight()+4:0;
+            q.visible=min(5,max(1,(q.submitY-q.rowY-3-errorGap)/q.rowH));
+            int focus=registerSelection>=5?4:registerSelection;
+            q.first=max(0,min(5-q.visible,focus-q.visible+1));
+            return q;
+        }
+        private void drawRegister(Graphics g){
+            RegisterLayout q=registerLayout();
+            fill(g,0xCFE7DD,q.x+2,q.y+3,q.w,q.h);
+            fill(g,0xFFFFFF,q.x,q.y,q.w,q.h);
+            g.setColor(BORDER);g.drawRect(q.x,q.y,q.w-1,q.h-1);
+            fill(g,GREEN,q.inner,q.y+3,min(56,q.width/4),3);
+            txt(g,"Tạo tài khoản",DARK,q.inner,q.y+8,bold);
+            String caption=notification.length()>0?notification:"Điền thông tin, sau đó chọn Đăng ký";
+            if(ch>=300)txt(g,trim(caption,q.width,small),notification.length()>0?0xA83B2B:MUTED,q.inner,q.y+9+bold.getHeight(),small);
+            if(q.visible<5){String page=(q.first+1)+"-"+(q.first+q.visible)+"/5";
+                txt(g,page,MUTED,q.inner+q.width-small.stringWidth(page),q.y+10,small);
+            }
+            for(int i=q.first;i<q.first+q.visible;i++){
+                int errorGap=authError.length()>0&&registerErrorField>=0?small.getHeight()+4:0;
+                int y=q.rowY+(i-q.first)*q.rowH+(i>registerErrorField?errorGap:0);
+                int controlH=ch<300?q.rowH-3:q.rowH-small.getHeight()-4;
+                int controlY=ch<300?y:y+small.getHeight()+1;
+                boolean selected=i==registerSelection;
+                if(ch>=300)txt(g,REG_LABELS[i],selected?GREEN_DEEP:MUTED,q.inner,y,small);
+                fill(g,selected?0xE4FFF3:0xF4FAF8,q.inner,controlY,q.width,controlH);
+                g.setColor(selected?GREEN:0xB5D5C9);g.drawRect(q.inner,controlY,q.width-1,controlH-1);
+                String content=registerFields[i];
+                if(i>=3&&content.length()>0){StringBuffer b=new StringBuffer();for(int z=0;z<min(16,content.length());z++)b.append('*');content=b.toString();}
+                String show=content.length()>0?content:REG_HINTS[i];
+                if(ch<300)show=REG_LABELS[i]+": "+(content.length()>0?content:"...");
+                Font f=ch<300?small:normal;
+                txt(g,trim(show,q.width-12,f),content.length()>0?TEXT:0x78968B,q.inner+6,controlY+max(1,(controlH-f.getHeight())/2),f);
+                if(authError.length()>0&&registerErrorField==i)
+                    txt(g,trim(authError,q.width,small),0xAF3F32,q.inner,y+q.rowH+1,small);
+            }
+            fill(g,registerSelection==5?SKY:GREEN_DEEP,q.inner,q.submitY,q.width,q.buttonH);
+            if(registerSelection==5){g.setColor(0xFFFFFF);g.drawRect(q.inner+2,q.submitY+2,q.width-5,q.buttonH-5);}
+            String label=busy?"Đang đăng ký...":"Đăng ký";
+            txt(g,label,0xFFFFFF,q.inner+max(3,(q.width-bold.stringWidth(label))/2),q.submitY+max(1,(q.buttonH-bold.getHeight())/2),bold);
+            String back="Đã có tài khoản? Đăng nhập";
+            int linkColor=registerSelection==6?SKY:GREEN_DEEP;
+            txt(g,trim(back,q.width,small),linkColor,q.inner+max(0,(q.width-small.stringWidth(back))/2),q.linkY,small);
+            if(registerSelection==6)fill(g,SKY,q.inner+max(0,(q.width-small.stringWidth(back))/2),q.linkY+small.getHeight()+1,min(q.width,small.stringWidth(back)),1);
+        }
+        /** Unified OTP recovery/change-password form; rows scroll on Nokia 320x240. */
+        private final class SecurityLayout {
+            int x,y,w,h,inner,width,first,visible,rowY,rowH,buttonH,btn1Y,btn2Y,backY,count;
+        }
+        private SecurityLayout securityLayout(boolean recovery){
+            SecurityLayout q=new SecurityLayout();q.count=recovery?4:3;
+            q.w=min(cw-2*(pad+5),cw>=480?520:420);q.x=(cw-q.w)/2;
+            int room=ch-headerH-footerH-8;q.h=max(95,room-4);
+            q.y=headerH+max(3,(room-q.h)/2);
+            int inset=max(9,q.w/20);q.inner=q.x+inset;q.width=q.w-2*inset;
+            q.rowY=q.y+bold.getHeight()+(ch<300?23:48);
+            q.rowH=large?52:narrow?36:27;
+            q.buttonH=large?38:26;
+            q.backY=q.y+q.h-small.getHeight()-7;
+            q.btn2Y=q.backY-q.buttonH-5;
+            q.btn1Y=recovery?q.btn2Y-q.buttonH-4:q.btn2Y;
+            q.visible=min(q.count,max(1,(q.btn1Y-q.rowY-4)/q.rowH));
+            int focus=(recovery?recoverySelection:changeSelection);
+            if(focus>=q.count)focus=q.count-1;
+            q.first=max(0,min(q.count-q.visible,focus-q.visible+1));
+            return q;
+        }
+        private void drawPasswordForm(Graphics g,boolean recovery){
+            SecurityLayout q=securityLayout(recovery);
+            fill(g,0xCEE8DD,q.x+2,q.y+3,q.w,q.h);
+            fill(g,0xFFFFFF,q.x,q.y,q.w,q.h);
+            g.setColor(BORDER);g.drawRect(q.x,q.y,q.w-1,q.h-1);
+            fill(g,GREEN,q.inner,q.y+3,min(56,q.width/4),3);
+            String heading=recovery?"Quên mật khẩu":"Đổi mật khẩu";
+            txt(g,heading,DARK,q.inner,q.y+8,bold);
+            String info=authError.length()>0?authError:notification.length()>0?notification:(recovery?"Nhập email để nhận OTP":"Yêu cầu mật khẩu hiện tại");
+            if(ch>=300)txt(g,trim(info,q.width,small),authError.length()>0?0xB14830:MUTED,q.inner,q.y+bold.getHeight()+13,small);
+            int focus=recovery?recoverySelection:changeSelection;
+            String[] fields=recovery?recoveryFields:changeFields;
+            String[] labels=recovery?RECOVERY_LABELS:CHANGE_LABELS;
+            for(int i=q.first;i<q.first+q.visible;i++){
+                int ry=q.rowY+(i-q.first)*q.rowH;
+                boolean selected=focus==i;
+                int fieldY=ch<300?ry:ry+small.getHeight()+1;
+                int fieldH=ch<300?q.rowH-3:q.rowH-small.getHeight()-4;
+                if(ch>=300)txt(g,labels[i],selected?GREEN_DEEP:MUTED,q.inner,ry,small);
+                fill(g,selected?0xE4FFF3:0xF5FAF8,q.inner,fieldY,q.width,fieldH);
+                g.setColor(selected?GREEN:0xAACCC2);g.drawRect(q.inner,fieldY,q.width-1,fieldH-1);
+                String value=fields[i];
+                boolean password=recovery?i>=2:true;
+                if(recovery&&i==1)password=false;
+                if(password&&value.length()>0){StringBuffer m=new StringBuffer();for(int z=0;z<min(value.length(),16);z++)m.append('*');value=m.toString();}
+                String label=value.length()==0?(recovery&&i==1?"6 chữ số":labels[i]):value;
+                if(ch<300)label=(recovery&&i==1?"OTP":labels[i])+": "+(value.length()==0?"...":value);
+                txt(g,trim(label,q.width-14,small),value.length()>0?TEXT:MUTED,q.inner+7,fieldY+max(1,(fieldH-small.getHeight())/2),small);
+            }
+            if(q.visible<q.count){String page=(q.first+1)+"-"+(q.first+q.visible)+"/"+q.count;
+                txt(g,page,MUTED,q.inner+q.width-small.stringWidth(page),q.y+10,small);}
+            if(recovery){
+                fill(g,focus==4?SKY:GREEN,q.inner,q.btn1Y,q.width,q.buttonH);
+                String b1="Gửi mã OTP qua email";
+                txt(g,trim(b1,q.width-10,bold),0xFFFFFF,q.inner+max(4,(q.width-bold.stringWidth(b1))/2),q.btn1Y+max(1,(q.buttonH-bold.getHeight())/2),bold);
+            }
+            String main=recovery?"Xác nhận OTP và đặt mật khẩu":"Đổi mật khẩu";
+            int bottomFocus=recovery?5:3;
+            fill(g,focus==bottomFocus?SKY:GREEN_DEEP,q.inner,q.btn2Y,q.width,q.buttonH);
+            txt(g,trim(main,q.width-8,small),0xFFFFFF,q.inner+max(4,(q.width-small.stringWidth(main))/2),q.btn2Y+max(1,(q.buttonH-small.getHeight())/2),small);
+            String back="Trở lại";
+            txt(g,back,focus==(recovery?6:4)?SKY:GREEN_DEEP,q.inner+max(1,(q.width-small.stringWidth(back))/2),q.backY,small);
+            if(ch<300&&(authError.length()>0||notification.length()>0))
+                txt(g,trim(info,q.width,small),authError.length()>0?0xB14830:GREEN_DEEP,q.inner,q.y+8+bold.getHeight()+2,small);
+        }
         private void drawInfo(Graphics g){
             int w=min(cw-2*pad-12,400),x=(cw-w)/2,y=headerH+max(12,(bodyBottom-headerH-180)/2);
             int h=min(bodyBottom-y-5,large?225:170);
             panel(g,x,y,w,h,false);
             int ix=x+10;
             txt(g,"Về MiniSocial",DARK,ix,y+12,bold);
-            txt(g,"Phiên bản 1.3.0",GREEN_DEEP,ix,y+12+bold.getHeight()+9,normal);
+            txt(g,"Phiên bản 1.5.0",GREEN_DEEP,ix,y+12+bold.getHeight()+9,normal);
             int ty=y+12+bold.getHeight()+normal.getHeight()+22;
             txt(g,trim("Mạng xã hội dành cho Java ME",w-20,small),TEXT,ix,ty,small);
             txt(g,trim("Xubi + Supabase | Nokia E72 / E6",w-20,small),MUTED,ix,ty+small.getHeight()+7,small);
@@ -496,7 +776,8 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             txt(g,trim("@"+profileHandle,cw-tx-pad-7,small),MUTED,tx,y+12+bold.getHeight(),small);
             int bioY=y+avatar+15;
             wrapped(g,profileBio,TEXT,pad+8,bioY,cw-2*pad-16,small,large?2:1);
-            headerHint(g,profileNeedsPaging()?"5: Bai viet | 6: Ten | 7: Gioi thieu":"6: Sua ten  |  7: Sua gioi thieu",y+ph-small.getHeight()-6);
+            headerHint(g,profileNeedsPaging()?"5: Bài viết | 6: Tên | 7: Bio":"6: Tên  |  7: Giới thiệu",y+ph-small.getHeight()-6);
+            if(profileId.equals(me)){String change="8: Đổi MK";txt(g,change,GREEN_DEEP,cw-pad-8-small.stringWidth(change),y+ph-small.getHeight()-6,small);}
             if(!profileNeedsPaging())drawPosts(g,y+ph+6,profilePosts);
         }
         private int friendListY(){return bodyTop+(large?65:53);}
@@ -612,7 +893,12 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             }});
         }
         private void back(){
-            if(tab==8||tab==9){tab=token.length()==0?0:1;screen.repaint();return;}
+            if(tab==11){recoveryFields=new String[]{"","","",""};recoverySent=false;authError="";notification="";tab=0;screen.repaint();return;}
+            if(tab==12){changeFields=new String[]{"","",""};authError="";notification="";tab=2;screen.repaint();return;}
+            if(tab==8||tab==9||tab==10){
+                if(tab==10){registerFields[3]="";registerFields[4]="";authError="";registerErrorField=-1;notification="";}
+                tab=token.length()==0?0:1;screen.repaint();return;
+            }
             if(tab==5){tab=4;reload();}
             else if(tab==6){tab=1;reload();}
             else if(tab==7){tab=3;reload();}
@@ -630,7 +916,8 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             else if(welcomeSelection==2)submitLogin();
             else if(welcomeSelection==3){serverSelection=serverMode;tab=8;repaint();}
             else if(welcomeSelection==4)auth(true);
-            else {tab=9;repaint();}
+            else if(welcomeSelection==5){tab=9;repaint();}
+            else openRecovery();
         }
         private void chooseNav(int index){
             if(index==0)navigate(1);
@@ -642,8 +929,58 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             if(busy)return;
             int action=0;try{action=getGameAction(k);}catch(Exception ignored){}
             // Tested game-action constants are used instead of raw arrow key codes.
+            if(tab==11||tab==12){
+                boolean rec=tab==11;
+                int current=rec?recoverySelection:changeSelection;
+                int count=rec?7:5;
+                if(k==-7||k=='0'){back();return;}
+                if(action==Canvas.UP||action==Canvas.LEFT){current=(current+count-1)%count;}
+                else if(action==Canvas.DOWN||action==Canvas.RIGHT){current=(current+1)%count;}
+                else if(action==Canvas.FIRE||k==-6){
+                    if(current<(rec?4:3))editPasswordField(rec,current);
+                    else if(rec&&current==4)sendRecoveryCode();
+                    else if(rec&&current==5)finishRecovery();
+                    else if(!rec&&current==3)finishChange();
+                    else back();
+                    return;
+                }else if(current<(rec?4:3)&&((k>=32&&k<=126)||k==8||k==127)){
+                    String[] fields=rec?recoveryFields:changeFields;
+                    String value=fields[current];
+                    if(k==8||k==127){if(value.length()>0)fields[current]=value.substring(0,value.length()-1);}
+                    else if(value.length()<(rec&&current==1?6:rec&&current==0?140:128))fields[current]=value+(char)k;
+                    authError="";notification="";
+                }
+                if(rec)recoverySelection=current;else changeSelection=current;
+                repaint();return;
+            }
             if(tab==9){
                 if(k==-7||k==-6||k=='0'||action==Canvas.FIRE){tab=0;repaint();}
+                return;
+            }
+            if(tab==10){
+                if(k==-7){back();return;}
+                if(action==Canvas.UP){registerSelection=(registerSelection+6)%7;repaint();return;}
+                if(action==Canvas.DOWN){registerSelection=(registerSelection+1)%7;repaint();return;}
+                if(action==Canvas.LEFT){registerSelection=(registerSelection+6)%7;repaint();return;}
+                if(action==Canvas.RIGHT){registerSelection=(registerSelection+1)%7;repaint();return;}
+                if(action==Canvas.FIRE||k==-6){
+                    if(registerSelection<5)editRegisterField(registerSelection);
+                    else if(registerSelection==5)submitRegistration();
+                    else back();
+                    return;
+                }
+                // Nokia E72 QWERTY can type directly into the selected Canvas field.
+                // OK still offers native TextBox editing (also supports emulator/touch).
+                if(registerSelection<5){
+                    String prev=registerFields[registerSelection];
+                    if(k==8||k==127||k==-8){
+                        if(prev.length()>0)registerFields[registerSelection]=prev.substring(0,prev.length()-1);
+                    }else if(k>=32&&k<=126){
+                        int lim=registerSelection==0?50:registerSelection==1?24:registerSelection==2?140:128;
+                        if(prev.length()<lim)registerFields[registerSelection]=prev+(char)k;
+                    }
+                    authError="";registerErrorField=-1;notification="";repaint();
+                }
                 return;
             }
             if(tab==8){
@@ -659,8 +996,8 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 return;
             }
             if(token.length()==0){
-                if(action==Canvas.UP){welcomeSelection=(welcomeSelection+5)%6;repaint();return;}
-                if(action==Canvas.DOWN){welcomeSelection=(welcomeSelection+1)%6;repaint();return;}
+                if(action==Canvas.UP){welcomeSelection=(welcomeSelection+6)%7;repaint();return;}
+                if(action==Canvas.DOWN){welcomeSelection=(welcomeSelection+1)%7;repaint();return;}
                 if(action==Canvas.LEFT){welcomeSelection=welcomeSelection>=3?3+(welcomeSelection-3+2)%3:(welcomeSelection+2)%3;repaint();return;}
                 if(action==Canvas.RIGHT){welcomeSelection=welcomeSelection>=3?3+(welcomeSelection-3+1)%3:(welcomeSelection+1)%3;repaint();return;}
                 if(k=='1')welcomeSelection=0;
@@ -669,6 +1006,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 else if(k=='4'||k=='#')welcomeSelection=3;
                 else if(k=='5')welcomeSelection=4;
                 else if(k=='6')welcomeSelection=5;
+                else if(k=='7')welcomeSelection=6;
                 else if(k==-7){tab=8;serverSelection=serverMode;repaint();return;}
                 if(action==Canvas.FIRE||k==-6)chooseWelcome();
                 repaint();return;
@@ -696,6 +1034,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 else if(k=='8')edit("photo-post","file:///E:/Images/anh.jpg",TextField.ANY);
                 else if(k=='*')toggleLike();else if(k=='5')showPostImage();else if(action==Canvas.FIRE)openComments();
             }else if(tab==2){
+                if(k=='8'&&profileId.equals(me)){openChange();return;}
                 if(k=='5'&&profileNeedsPaging()){profilePostsMode=!profilePostsMode;selection=0;repaint();return;}
                 if(k=='6'&&profileId.equals(me))edit("profile-name","Ten hien thi",TextField.ANY);
                 else if(k=='7'&&profileId.equals(me))edit("profile-bio","Gioi thieu",TextField.ANY);
@@ -717,7 +1056,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             if(busy)return;
             layout();
             if(y>=0&&y<headerH){
-                if(tab==8||tab==9)back();
+                if(tab==8||tab==9||tab==11||tab==12)back();
                 else if(token.length()>0){tab=8;serverSelection=serverMode;}
                 repaint();return;
             }
@@ -733,12 +1072,46 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 return;
             }
             if(tab==9){if(y>=ch-footerH)back();else back();repaint();return;}
+            if(tab==11||tab==12){
+                boolean rec=tab==11;
+                SecurityLayout q=securityLayout(rec);
+                int count=rec?4:3;
+                if(x>=q.inner&&x<q.inner+q.width){
+                    for(int i=q.first;i<q.first+q.visible;i++){
+                        int ry=q.rowY+(i-q.first)*q.rowH;
+                        if(y>=ry&&y<ry+q.rowH){if(rec)recoverySelection=i;else changeSelection=i;editPasswordField(rec,i);return;}
+                    }
+                }
+                if(rec&&y>=q.btn1Y&&y<q.btn1Y+q.buttonH){recoverySelection=4;sendRecoveryCode();return;}
+                if(y>=q.btn2Y&&y<q.btn2Y+q.buttonH){if(rec){recoverySelection=5;finishRecovery();}else{changeSelection=3;finishChange();}return;}
+                if(y>=q.backY-3||y<q.y){back();return;}
+                repaint();return;
+            }
+            if(tab==10){
+                RegisterLayout r=registerLayout();
+                if(x>=r.inner&&x<r.inner+r.width){
+                    int errGap=authError.length()>0&&registerErrorField>=0?small.getHeight()+4:0;
+                    for(int i=r.first;i<r.first+r.visible;i++){
+                        int iy=r.rowY+(i-r.first)*r.rowH+(i>registerErrorField?errGap:0);
+                        if(y>=iy&&y<iy+r.rowH){registerSelection=i;editRegisterField(i);return;}
+                    }
+                }
+                if(y>=r.submitY&&y<r.submitY+r.buttonH){registerSelection=5;submitRegistration();return;}
+                if(y>=r.linkY-2&&y<r.y+r.h+4){registerSelection=6;back();return;}
+                if(y>=ch-footerH){back();return;}
+                repaint();return;
+            }
             if(token.length()==0){
                 LoginLayout q=loginLayout();int inner=q.x+max(9,q.w/19),right=inner+q.w-2*max(9,q.w/19);
                 if(x>=inner&&x<=right){
                     if(y>=q.y+q.field1Y&&y<q.y+q.field1Y+q.fieldH){welcomeSelection=0;chooseWelcome();return;}
                     if(y>=q.y+q.field2Y&&y<q.y+q.field2Y+q.fieldH){welcomeSelection=1;chooseWelcome();return;}
                     if(y>=q.y+q.buttonY&&y<q.y+q.buttonY+q.buttonH){welcomeSelection=2;chooseWelcome();return;}
+                }
+                String lost="Quên mật khẩu?";
+                int lostX=inner+(right-inner)-small.stringWidth(lost)-2;
+                if(x>=lostX&&x<=right&&y>=q.y+q.label2Y-2&&y<q.y+q.label2Y+small.getHeight()+5){
+                    welcomeSelection=6;openRecovery();return;
                 }
                 if(y>=q.y+q.linksY-3&&y<=q.y+q.linksY+small.getHeight()+8){
                     for(int i=0;i<3;i++)if(x>=q.linkX[i]&&x<q.linkX[i]+q.linkW[i]){
@@ -762,6 +1135,8 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 int i=first+(y-firstY)/max(1,cardH+gap);
                 if(i>=0&&i<feed.size()){selection=i;if(y>=firstY+(i-first)*(cardH+gap)+cardH-small.getHeight()-8)toggleLike();else openComments();}
             }else if(tab==2){
+                int py=bodyTop+2;
+                if(profileId.equals(me)&&y>=py+profileHeaderHeight()-small.getHeight()-12&&y<py+profileHeaderHeight()+2){openChange();return;}
                 if(profileNeedsPaging()&&!profilePostsMode){profilePostsMode=true;repaint();return;}
                 int firstY=profileNeedsPaging()?bodyTop+24:bodyTop+2+profileHeaderHeight()+6;
                 if(y>=firstY){int gap=large?8:4,first=windowStart(profilePosts,firstY,cardH+gap);int i=first+(y-firstY)/(cardH+gap);if(i>=0&&i<profilePosts.size()){selection=i;openComments();}}

@@ -33,6 +33,29 @@ final class Supabase {
   Object login(String email,String pass){return auth("/auth/v1/token?grant_type=password",Map.of("email",email,"password",pass));}
   private Object auth(String path,Object payload){HttpResponse<byte[]>r=call("POST",path,publishable,publishable,bytes(payload),"application/json",false);return Json.parse(new String(r.body(),java.nio.charset.StandardCharsets.UTF_8));}
   String userId(String jwt){HttpResponse<byte[]>r=call("GET","/auth/v1/user",publishable,jwt,null,null,false);String id=Json.string(Json.map(Json.parse(new String(r.body(),java.nio.charset.StandardCharsets.UTF_8))).get("id"));if(!id.matches("[0-9a-fA-F-]{36}"))throw new Error(401,"Invalid session");return id;}
+  // Recovery codes are generated/verified by Supabase Auth. They are never stored here.
+  void sendRecovery(String email){call("POST","/auth/v1/recover",publishable,publishable,bytes(Map.of("email",email)),"application/json",false);}
+  void resetPassword(String email,String otp,String next){
+    Map<String,Object> session=Json.map(auth("/auth/v1/verify",Map.of("type","recovery","email",email,"token",otp)));
+    String access=Json.string(session.get("access_token"));
+    if(access.length()<20||access.startsWith("sb_"))throw new Error(401,"Invalid OTP or expired code");
+    updatePassword(access,next);
+  }
+  private void updatePassword(String jwt,String next){
+    call("PUT","/auth/v1/user",publishable,jwt,bytes(Map.of("password",next)),"application/json",false);
+  }
+  void changePassword(String jwt,String current,String next,String expectedId){
+    Map<String,Object> who=Json.map(Json.parse(new String(call("GET","/auth/v1/user",publishable,jwt,null,null,false).body(),java.nio.charset.StandardCharsets.UTF_8)));
+    String email=Json.string(who.get("email")), id=Json.string(who.get("id"));
+    if(email.isEmpty()||!expectedId.equals(id))throw new Error(401,"Invalid login session");
+    // Verify the old password against Supabase instead of only trusting a cached session.
+    Map<String,Object> verified;
+    try{verified=Json.map(login(email,current));}
+    catch(Error e){if(e.status==400||e.status==401||e.status==422)throw new Error(401,"Current password incorrect");throw e;}
+    String oldId=Json.string(Json.map(verified.get("user")).get("id"));
+    if(!expectedId.equals(oldId))throw new Error(401,"Current password incorrect");
+    updatePassword(jwt,next);
+  }
   void upload(String path,byte[] raw,String mime){call("POST","/storage/v1/object/minisocial-private/"+path,secret,secret,raw,mime,false);}
   byte[] download(String path){return call("GET","/storage/v1/object/minisocial-private/"+path,secret,secret,null,null,false).body();}
   void deleteUpload(String path){try{call("DELETE","/storage/v1/object/minisocial-private/"+path,secret,secret,null,null,false);}catch(Exception ignore){}}
