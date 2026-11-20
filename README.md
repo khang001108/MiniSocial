@@ -1,3 +1,7 @@
+## MiniSocial v1.9.0 — Adaptive chat UI + Conversations API
+
+Thêm danh sách hội thoại có xem trước tin nhắn và thời gian từ endpoint `/m/conversations`; giữ tương thích server cũ bằng danh sách bạn bè dự phòng. Màn chat 640×360/640×480 chia hai cột, màn dọc một cột. Ẩn tab lúc mở chat, cuộn toàn bộ tin nhắn dài bằng phím lên/xuống và kéo trên máy cảm ứng; phím `#` không còn đăng xuất ngay. Không đổi schema Supabase. Xem `HUONG-DAN-v1.9.0-ADAPTIVE.md`.
+
 ## MiniSocial v1.8.2 — Giao diện tự co giãn và xoay dọc/ngang
 
 - Hỗ trợ 240×320, 320×240, 360×640, 640×360, 480×640 và 640×480 (và độ phân giải tương tự).

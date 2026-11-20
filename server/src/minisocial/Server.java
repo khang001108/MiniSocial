@@ -63,6 +63,7 @@ public final class Server {
         case "/m/search":require(get);search(x,q,me);break;
         case "/m/friend":require(post);invite(x,f,me);break;
         case "/m/accept":require(post);accept(x,f,me);break;
+        case "/m/conversations":require(get);conversations(x,me);break;
         case "/m/chat":require(get);chat(x,q,me);break;
         case "/m/message":require(post);message(x,f,me);break;
         case "/m/upload":require(post);upload(x,q,me);break;
@@ -382,6 +383,44 @@ public final class Server {
     if(found==null)throw new Fault(404,"Request not found");db.db("PATCH","friendships?requester_id=eq."+requester+"&addressee_id=eq."+me,Map.of("status","accepted"));ok(x,"Accepted");
   }
   private boolean friendsWith(String a,String b){return first(db.db("GET","friend_list?select=friend_id&user_id=eq."+a+"&friend_id=eq."+b+"&limit=1",null))!=null;}
+  /** Sidebar index, derived from existing friend_list + messages; no schema migration.
+   * Never expose conversations with users who are not accepted friends.
+   * Unread/read status is deliberately omitted because the database has no read receipts.
+   */
+  private void conversations(HttpExchange x,String me)throws IOException{
+    List<Object> known=Json.list(db.db("GET","friend_list?select=friend_id,display_name,handle&user_id=eq."+me+"&limit=100",null));
+    List<Object> recent=Collections.emptyList();
+    if(!known.isEmpty()){
+      String path="messages?select=sender_id,recipient_id,body,media_id,created_at&or=(sender_id.eq."+me+",recipient_id.eq."+me+")&order=created_at.desc&limit=300";
+      recent=Json.list(db.db("GET",path,null));
+    }
+    rows(x,conversationRows(me,known,recent));
+  }
+  /** Pure index builder, unit-testable without Supabase credentials. */
+  static List<String> conversationRows(String me,List<Object> known,List<Object> recent){
+    Map<String,Map<String,Object>> latest=new HashMap<>();
+    for(Object obj:recent){
+      Map<String,Object> m=Json.map(obj);
+      String from=val(m,"sender_id"),to=val(m,"recipient_id"),other=from.equals(me)?to:from;
+      if(other.length()>0&&!latest.containsKey(other))latest.put(other,m);
+    }
+    List<Map<String,Object>> sorted=new ArrayList<>();
+    for(Object item:known)sorted.add(Json.map(item));
+    sorted.sort((a,b)->{
+      Map<String,Object> ma=latest.get(val(a,"friend_id")),mb=latest.get(val(b,"friend_id"));
+      String ta=ma==null?"":val(ma,"created_at"),tb=mb==null?"":val(mb,"created_at");
+      int recentTime=tb.compareTo(ta);
+      return recentTime!=0?recentTime:val(a,"display_name").compareToIgnoreCase(val(b,"display_name"));
+    });
+    List<String> result=new ArrayList<>();
+    for(Map<String,Object> f:sorted){
+      String friend=val(f,"friend_id");Map<String,Object> msg=latest.get(friend);
+      String preview=msg==null?"":val(msg,"body");
+      if(msg!=null&&!val(msg,"media_id").isEmpty()&&preview.isEmpty())preview="[Ảnh]";
+      result.add(line(friend,val(f,"display_name"),val(f,"handle"),preview,msg==null?"":val(msg,"created_at")));
+    }
+    return result;
+  }
   private void chat(HttpExchange x,Map<String,String>q,String me)throws IOException{
     String peer=id(q.get("user"));if(!friendsWith(me,peer))throw new Fault(403,"Add friend first");
     String path="messages?select=id,sender_id,recipient_id,body,media_id,created_at,device_model&or=(and(sender_id.eq."+me+",recipient_id.eq."+peer+"),and(sender_id.eq."+peer+",recipient_id.eq."+me+"))&order=created_at.desc&limit=40";

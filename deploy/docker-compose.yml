@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: server/Dockerfile
-    image: minisocial-server:1.8.0
+    image: minisocial-server:1.9.0
     container_name: minisocial
     restart: unless-stopped
     env_file:

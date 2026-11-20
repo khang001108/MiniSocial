@@ -58,7 +58,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
     private TextBox editor;private final Command save=new Command("OK",Command.OK,1),cancel=new Command("Huy",Command.CANCEL,2);
     private String mode="", target="",pendingMedia="";
     private boolean busy=false;private String notification="";
-    private Vector feed=new Vector(),profilePosts=new Vector(), friends=new Vector(),incoming=new Vector(),messages=new Vector(),comments=new Vector();
+    private Vector feed=new Vector(),profilePosts=new Vector(), friends=new Vector(),conversations=new Vector(),incoming=new Vector(),messages=new Vector(),comments=new Vector();
     private String peer="",peerName="",profileId="",profileName="",profileHandle="",profileBio="";
     private int tab=1,selection=0;private String photoId="";
 
@@ -191,7 +191,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         if(!next.equals(host)){
             // A Supabase login token from server A must never be sent to server B.
             token="";me="";myName="";loginPassword="";saveSession();
-            feed=new Vector();friends=new Vector();messages=new Vector();incoming=new Vector();avatarCache.clear();
+            feed=new Vector();friends=new Vector();conversations=new Vector();messages=new Vector();incoming=new Vector();avatarCache.clear();
         }
         serverMode=idx;host=next;
         if(saveServer())notification="May chu: "+(idx==0?"Internet":idx==1?"Wi-Fi/LAN":"Tuy chinh");
@@ -313,7 +313,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             notification="Đã lưu hồ sơ";
         }});
     }
-    private void logout(){token="";me="";myName="";loginPassword="";saveSession();tab=0;welcomeSelection=0;screen.repaint();}
+    private void logout(){token="";me="";myName="";loginPassword="";conversations=new Vector();messages=new Vector();peer="";peerName="";saveSession();tab=0;welcomeSelection=0;screen.repaint();}
     private interface Task{void run()throws Exception;}
     private void work(final Task t){if(busy)return;busy=true;notification="";screen.repaint();new Thread(new Runnable(){public void run(){try{t.run();}catch(Exception e){notification=e.getMessage();}finally{busy=false;screen.repaint();}}}).start();}
     private static String encode(String v){try{byte[]b=v.getBytes("UTF-8");StringBuffer s=new StringBuffer();String hex="0123456789ABCDEF";for(int i=0;i<b.length;i++){int c=b[i]&255;if(c>=65&&c<=90||c>=97&&c<=122||c>=48&&c<=57||c==45||c==95||c==46){s.append((char)c);}else if(c==32)s.append('+');else{s.append('%');s.append(hex.charAt(c>>4));s.append(hex.charAt(c&15));}}return s.toString();}catch(Exception e){return "";}}
@@ -349,13 +349,34 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 if(incoming.size()>0)notification="Bạn có "+incoming.size()+" lời mời kết bạn";
             }catch(Exception ignored){}}
         }
-        else if(requested==4){if(peer.length()>0)messages=listing("/m/chat?user="+encode(peer));else friends=listing("/m/friends");}
+        else if(requested==4){
+            if(peer.length()>0){messages=listing("/m/chat?user="+encode(peer));
+                if(conversations.size()==0){try{loadConversations();}catch(Exception ignored){}}
+            }else loadConversations();
+        }
         else if(requested==5){}else if(requested==6)comments=listing("/m/comments?post="+encode(target));
         else if(requested==7)incoming=listing("/m/requests");
     }});}
+    /** New v1.9 endpoint; older 1.8 servers fall back to the friends list. */
+    private void loadConversations()throws Exception{
+        try{conversations=listing("/m/conversations");}
+        catch(Exception unsupported){
+            // Only treat an unknown endpoint as a legacy-server response.
+            String reason=unsupported.getMessage();
+            if(reason==null||reason.indexOf("Not found")<0)throw unsupported;
+            friends=listing("/m/friends");
+            Vector converted=new Vector();
+            for(int i=0;i<friends.size();i++){
+                String[]f=(String[])friends.elementAt(i);
+                converted.addElement(new String[]{piece(f,0),piece(f,1),piece(f,2),"",""});
+            }
+            conversations=converted;
+            notification="Cần cập nhật server để xem tin gần nhất";
+        }
+    }
     private void navigate(int t){
         if(token.length()==0){tab=0;screen.repaint();return;}
-        tab=t;selection=0;navFocus=false;optionsOpen=false;navSelection=t==4?1:t==3?2:0;
+        tab=t;selection=0;navFocus=false;optionsOpen=false;navSelection=t==4?1:t==3?2:0;screen.chatScrollPx=0;screen.chatMaxScroll=0;screen.chatPaneFocus=false;
         reload();
     }
     private void edit(String m,String title,int constraints){mode=m;editor=new TextBox(title,"",500,constraints);editor.addCommand(save);editor.addCommand(cancel);editor.setCommandListener(this);display.setCurrent(editor);}
@@ -525,7 +546,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         display.setCurrent(screen);
         if(selected.equals("delete-password")){deleteAccountPassword=value;tab=17;screen.repaint();return;}
         if(selected.equals("post")){final String data="body="+encode(value)+"&media="+encode(pendingMedia);work(new Task(){public void run()throws Exception{single("/m/post",data);pendingMedia="";feed=listing("/m/feed");}});}
-        else if(selected.equals("chat")){final String peer0=peer;work(new Task(){public void run()throws Exception{single("/m/message","user="+encode(peer0)+"&body="+encode(value));messages=listing("/m/chat?user="+encode(peer0));}});}
+        else if(selected.equals("chat")){final String peer0=peer;work(new Task(){public void run()throws Exception{single("/m/message","user="+encode(peer0)+"&body="+encode(value));messages=listing("/m/chat?user="+encode(peer0));screen.chatScrollPx=0;}});}
         else if(selected.equals("comment")){final String id0=target;work(new Task(){public void run()throws Exception{single("/m/comments","post="+encode(id0)+"&body="+encode(value));comments=listing("/m/comments?post="+encode(id0));}});}
         else if(selected.equals("profile-name")||selected.equals("profile-bio")){
             final String data=(selected.equals("profile-name")?"name=":"bio=")+encode(value);
@@ -560,6 +581,9 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         private String loadedPhoto="";
         private int cw,ch,pad,headerH,navH,footerH,bodyTop,bodyBottom,cardH,rowH;
         private boolean portrait,narrow,large,compactLandscape,profilePostsMode=false;
+        private int chatScrollPx=0,chatMaxScroll=0,dragLastY=-1;
+        private int chatTapStartY=-1;private boolean chatTapPending=false;
+        private boolean chatPaneFocus=false;
         // Lazy image cache: a small working set only; never decode the full v2 pack.
         private Hashtable uiCache=new Hashtable();
         private Vector uiRecent=new Vector();
@@ -646,7 +670,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             headerH=large?(compactLandscape?42:shorter>=440?56:47):34;
             navH=large?(compactLandscape?34:43):30;
             footerH=large?(compactLandscape?28:38):24;
-            bodyTop=headerH+navH+4;
+            bodyTop=headerH+(tab==4&&peer.length()>0?4:navH+4);
             bodyBottom=max(bodyTop+1,ch-footerH-3);
             small=Font.getFont(Font.FACE_SYSTEM,Font.STYLE_PLAIN,large?Font.SIZE_MEDIUM:Font.SIZE_SMALL);
             normal=Font.getFont(Font.FACE_SYSTEM,Font.STYLE_PLAIN,large?Font.SIZE_LARGE:Font.SIZE_MEDIUM);
@@ -703,8 +727,16 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             layout();fill(g,BG,0,0,cw,ch);
             grad(g,0,headerH);
             int markSize=large?27:20;
-            brandMark(g,pad+3,max(2,(headerH-markSize)/2),markSize);
-            txt(g,"MiniSocial",0xFFFFFF,pad+markSize+9,max(3,(headerH-title.getHeight())/2),title);
+            boolean chatDetail=token.length()>0&&tab==4&&peer.length()>0;
+            int titleX=pad+markSize+9;
+            if(chatDetail){
+                txt(g,"<",0xFFFFFF,pad+5,max(3,(headerH-title.getHeight())/2),title);
+                titleX=pad+(large?31:23);
+                txt(g,trim(peerName,max(20,cw-titleX-small.stringWidth(clock())-2*pad),title),0xFFFFFF,titleX,max(3,(headerH-title.getHeight())/2),title);
+            }else{
+                brandMark(g,pad+3,max(2,(headerH-markSize)/2),markSize);
+                txt(g,"MiniSocial",0xFFFFFF,titleX,max(3,(headerH-title.getHeight())/2),title);
+            }
             txt(g,clock(),0xE9F4FF,max(pad+10,cw-pad-small.stringWidth(clock())),max(3,(headerH-small.getHeight())/2),small);
             if(tab==8)drawServer(g);
             else if(tab==9)drawInfo(g);
@@ -713,7 +745,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             else if(token.length()==0)drawWelcome(g);
             else if(tab==5)photoView(g);
             else{
-                topNav(g);
+                if(!(tab==4&&peer.length()>0))topNav(g);
                 if(tab==1)drawFeed(g);
                 else if(tab==2)drawProfile(g);
                 else if(tab==3)drawFriends(g);
@@ -965,7 +997,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             panel(g,x,y,w,h,false);
             int ix=x+10;
             txt(g,"Về MiniSocial",DARK,ix,y+12,bold);
-            txt(g,"Phiên bản 1.5.0",GREEN_DEEP,ix,y+12+bold.getHeight()+9,normal);
+            txt(g,"Phiên bản 1.9.0",GREEN_DEEP,ix,y+12+bold.getHeight()+9,normal);
             int ty=y+12+bold.getHeight()+normal.getHeight()+22;
             txt(g,trim("Mạng xã hội dành cho Java ME",w-20,small),TEXT,ix,ty,small);
             txt(g,trim("Xubi + Supabase | Nokia E72 / E6",w-20,small),MUTED,ix,ty+small.getHeight()+7,small);
@@ -1080,11 +1112,11 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         private void drawOptions(Graphics g){
             int h=large?40:31,w=Math.min(cw-2*pad,large?260:194),x=pad+2,y=ch-footerH-4* h-6;
             if(y<headerH+2)y=headerH+2;
-            fill(g,themeDark?0x1C312D:0xFFFFFF,x,y,w,4*h+2);
+            fill(g,themeDark?0x1C2F4B:0xFFFFFF,x,y,w,4*h+2);
             g.setColor(BORDER);g.drawRect(x,y,w-1,4*h+1);
             for(int i=0;i<4;i++){
-                int yy=y+i*h,icol=themeDark?0xD4EEE2:DARK;
-                if(i==optionsSelection)fill(g,themeDark?0x2B5548:0xE3F0FF,x+2,yy+1,w-4,h-2);
+                int yy=y+i*h,icol=themeDark?0xE2ECFA:DARK;
+                if(i==optionsSelection)fill(g,themeDark?0x2B456C:0xE3F0FF,x+2,yy+1,w-4,h-2);
                 String[] symbols={"profile","settings","clock","file"};
                 if(!uiIcon(g,symbols[i],x+9,yy+(h-(large?23:16))/2,themeDark))
                     icon(g,3+i,x+9,yy+(h-18)/2,18,icol);
@@ -1289,93 +1321,144 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             }
             if(friends.size()==0)emptyIcon(g,"empty_friends",y+5,"Chưa có bạn bè. Nhấn 6 để kết bạn.");
         }
-        private int chatListY(){return bodyTop+(large?63:51);}
+        private int chatListY(){return bodyTop+(large?30:22);}
         private int chatInputHeight(){return compactLandscape?33:large?42:29;}
-        /** Returns text lines needed for chat bubbles, capped for a tiny viewport. */
-        private int wrappedLines(String s,int maxWidth,Font f,int limit){
+        private boolean splitChat(){return tab==4&&peer.length()>0&&!portrait&&cw>=560;}
+        private int splitWidth(){return max(185,min(260,cw*36/100));}
+        private String messageTime(String raw){
+            if(raw==null||raw.length()==0)return "";
+            if(raw.length()>=16&&raw.charAt(10)=='T')return raw.substring(11,16);
+            return raw.length()>16?raw.substring(0,10):raw;
+        }
+        private int chatRowHeight(){return compactLandscape?51:large?62:portrait?54:43;}
+        private int conversationRowTop(){return chatListY();}
+        /** Conversation rows use server data only; no fabricated unread or online states. */
+        private void drawConversationRows(Graphics g,int x,int y,int width,int bottom){
+            int gap=large?4:3,h=chatRowHeight(),stride=h+gap;
+            int count=max(1,(bottom-y)/stride),n=conversations.size();
+            if(n==0){
+                txt(g,trim("Chưa có hội thoại. Kết bạn để bắt đầu.",width-12,small),MUTED,x+6,y+8,small);
+                return;
+            }
+            selection=max(0,min(selection,n-1));
+            int first=max(0,min(selection-count+1,max(0,n-count)));
+            for(int i=first;i<n;i++){
+                int ry=y+(i-first)*stride;if(ry+h>bottom)break;
+                String[] a=(String[])conversations.elementAt(i);
+                boolean active=splitChat()&&chatPaneFocus?i==selection:piece(a,0).equals(peer)||peer.length()==0&&i==selection;
+                panel(g,x,ry,width,h,active);
+                int avatar=large?39:27;
+                if(x+5+avatar< cw)defaultAvatar(g,x+5,ry+max(1,(h-avatar)/2));
+                int tx=x+avatar+11;
+                int tw=max(8,width-(tx-x)-7);
+                String tm=messageTime(piece(a,4));
+                int timeW=tm.length()>0?small.stringWidth(tm)+4:0;
+                txt(g,trim(piece(a,1),max(8,tw-timeW),bold),TEXT,tx,ry+max(3,(h-bold.getHeight()-small.getHeight()-2)/2),bold);
+                if(timeW>0)txt(g,tm,MUTED,max(tx,x+width-timeW-5),ry+3,small);
+                String preview=piece(a,3);
+                if(preview.length()==0)preview="Bắt đầu trò chuyện";
+                txt(g,trim(preview,tw,small),MUTED,tx,ry+max(3,(h-bold.getHeight()-small.getHeight()-2)/2)+bold.getHeight()+2,small);
+            }
+        }
+        private void drawConversationList(Graphics g,int x,int width,int bottom){
+            txt(g,trim("Hội thoại  (9: Làm mới)",width-12,bold),DARK,x+5,bodyTop+4,bold);
+            drawConversationRows(g,x+2,conversationRowTop(),width-4,bottom);
+        }
+        /** Linear-time line breaks; avoids repeated substring allocations on Nokia. */
+        private int lineEnd(String s,int pos,int maxWidth,Font font){
+            int end=pos,last=-1,pixels=0;
+            while(end<s.length()){
+                char ch=s.charAt(end);if(ch=='\n')break;
+                int step=font.charWidth(ch);
+                if(end>pos&&pixels+step>maxWidth)break;
+                pixels+=step;if(ch==' ')last=end;
+                end++;
+            }
+            if(end==pos)end=min(s.length(),pos+1);
+            else if(end<s.length()&&s.charAt(end)!='\n'&&last>pos)end=last+1;
+            return end;
+        }
+        private int wrappedLines(String s,int maxWidth,Font font,int limit){
             if(s==null||s.length()==0)return 1;
             int pos=0,count=0;
             while(pos<s.length()&&count<limit){
-                int end=pos,last=-1;
-                while(end<s.length()){
-                    char c=s.charAt(end);if(c=='\n')break;
-                    if(f.stringWidth(s.substring(pos,end+1))>maxWidth)break;
-                    if(c==' ')last=end;
-                    end++;
-                }
-                if(end==pos)end=min(s.length(),pos+1);
-                else if(end<s.length()&&s.charAt(end)!='\n'&&last>pos)end=last+1;
-                pos=end;
+                pos=lineEnd(s,pos,maxWidth,font);
                 while(pos<s.length()&&(s.charAt(pos)==' '||s.charAt(pos)=='\n'))pos++;
                 count++;
             }
             return max(1,count);
         }
+        private int bubbleHeight(String value,int textWidth){
+            int lines=wrappedLines(value,textWidth,normal,80);
+            return max(large?39:32,8+lines*(normal.getHeight()+1)+small.getHeight()+6);
+        }
+        private int chatContentLeft(){return splitChat()?splitWidth()+pad:pad;}
+        private int chatTop(){return bodyTop+(large?31:23)+6;}
+        private int chatBottom(){return bodyBottom-chatInputHeight()-4;}
+        private int bubbleMaxWidth(int contentW){return max(65,min(contentW-12,contentW*78/100));}
+        private String bubbleText(String[] m){return piece(m,3).length()>0?"[Ảnh] "+piece(m,2):piece(m,2);}
+        private int contentHeight(int textWidth,int gap){
+            int sum=0;
+            for(int i=0;i<messages.size();i++)sum+=bubbleHeight(bubbleText((String[])messages.elementAt(i)),textWidth)+gap;
+            return sum;
+        }
         private void drawChat(Graphics g){
-            if(peer.length()==0){
-                headerHint(g,"Chọn bạn bè để bắt đầu chat",bodyTop+6);
-                int y=bodyTop+small.getHeight()+15,h=large?57:38;
-                for(int i=0;i<friends.size();i++){
-                    int ry=y+i*(h+3);if(ry+h>bodyBottom)break;
-                    String[] fr=(String[])friends.elementAt(i);
-                    panel(g,pad+2,ry,cw-2*pad-4,h,i==selection);
-                    defaultAvatar(g,pad+9,ry+max(2,(h-(large?39:27))/2));
-                    int start=pad+(large?57:42);
-                    txt(g,trim(piece(fr,1),cw-start-pad-32,normal),TEXT,start,ry+max(3,(h-normal.getHeight())/2),normal);
-                    uiIcon(g,"chats",cw-pad-(large?30:25),ry+max(2,(h-(large?23:16))/2),themeDark);
-                }
-                if(friends.size()==0)emptyIcon(g,"chat_empty",y+3,"Chưa có cuộc chat. Vào Bạn bè để kết bạn.");
-                return;
+            if(peer.length()==0){drawConversationList(g,pad,cw-2*pad,bodyBottom);return;}
+            boolean split=splitChat();
+            int left=chatContentLeft(),contentW=cw-left-pad;
+            if(split){
+                fill(g,themeDark?0x162741:0xEFF5FE,0,bodyTop,splitWidth(),bodyBottom-bodyTop);
+                drawConversationList(g,pad,splitWidth()-pad,bodyBottom);
+                fill(g,BORDER,splitWidth()-1,bodyTop,1,bodyBottom-bodyTop);
             }
-            int headerTop=bodyTop+2,peerH=large?31:23;
-            panel(g,pad,headerTop,cw-2*pad,peerH,false);
-            uiIcon(g,"chats",pad+6,headerTop+max(2,(peerH-(large?23:16))/2),themeDark);
-            txt(g,trim(peerName,cw-2*pad-74,bold),DARK,pad+(large?40:28),headerTop+max(2,(peerH-bold.getHeight())/2),bold);
-            int inputH=chatInputHeight();
-            int inputY=bodyBottom-inputH;
-            panel(g,pad,inputY,cw-2*pad,inputH-2,false);
+            int peerH=large?31:23,headerTop=bodyTop+2;
+            panel(g,left,headerTop,contentW,peerH,false);
             int iconSize=large?23:16;
-            uiIcon(g,"attach",pad+6,inputY+max(1,(inputH-iconSize)/2),themeDark);
-            txt(g,trim("2: Soạn tin   8: Ảnh",cw-2*pad-(large?100:67),small),MUTED,pad+(large?39:27),inputY+max(3,(inputH-small.getHeight())/2),small);
-            uiIcon(g,"send",cw-pad-(large?33:23),inputY+max(1,(inputH-iconSize)/2),themeDark);
-            // A dynamic message viewport: bubbles hug their content, stay within
-            // the active width, and accumulate bottom-up as messaging apps do.
-            int top=headerTop+peerH+4,bottom=inputY-3;
-            int gap=compactLandscape?4:large?6:3;
-            int maxWidth=max(90,min(cw-2*pad-(large?45:25),portrait?cw-2*pad-34:(cw*3)/4));
-            int minWidth=min(maxWidth,large?112:85);
-            int cursor=bottom;
+            uiIcon(g,"chats",left+6,headerTop+max(1,(peerH-iconSize)/2),themeDark);
+            txt(g,trim(peerName,contentW-42,bold),TEXT,left+iconSize+11,headerTop+max(2,(peerH-bold.getHeight())/2),bold);
+            int inputH=chatInputHeight(),inputY=bodyBottom-inputH;
+            panel(g,left,inputY,contentW,inputH-2,false);
+            uiIcon(g,"attach",left+6,inputY+max(1,(inputH-iconSize)/2),themeDark);
+            txt(g,trim("2: Soạn tin  8: Ảnh",contentW-(large?92:58),small),MUTED,left+iconSize+12,inputY+max(2,(inputH-small.getHeight())/2),small);
+            uiIcon(g,"send",left+contentW-iconSize-6,inputY+max(1,(inputH-iconSize)/2),themeDark);
+            int top=chatTop(),bottom=chatBottom(),viewH=max(1,bottom-top);
+            int gap=compactLandscape?3:large?5:3;
+            int maxWidth=bubbleMaxWidth(contentW),textWidth=max(14,maxWidth-14);
+            int total=contentHeight(textWidth,gap);
+            chatMaxScroll=max(0,total-viewH);
+            chatScrollPx=min(chatScrollPx,chatMaxScroll);
+            int cursor=bottom+chatScrollPx;
+            int oldX=g.getClipX(),oldY=g.getClipY(),oldW=g.getClipWidth(),oldH=g.getClipHeight();
+            g.setClip(left,top,contentW,viewH);
             for(int i=messages.size()-1;i>=0;i--){
-                String[]m=(String[])messages.elementAt(i);
+                String[] m=(String[])messages.elementAt(i);
                 boolean mine=piece(m,1).equals(me);
-                String value=piece(m,3).length()>0?"[Ảnh] "+piece(m,2):piece(m,2);
-                String time=piece(m,4);
-                if(time.length()>=16&&time.charAt(10)=='T')time=time.substring(11,16);
-                else if(time.length()>5)time=time.substring(max(0,time.length()-5));
-                int ideal=normal.stringWidth(value)+24;
-                int width=max(minWidth,min(maxWidth,ideal));
-                int textWidth=max(1,width-14);
-                int availableHeight=max(1,bottom-top);
-                int maxLines=max(1,(availableHeight-small.getHeight()-17)/max(1,normal.getHeight()+1));
-                int lines=wrappedLines(value,textWidth,normal,min(large?5:4,maxLines));
-                int bubbleH=max(compactLandscape?45:large?52:39,
-                    10+lines*(normal.getHeight()+1)+small.getHeight()+7);
+                String value=bubbleText(m);
+                int width=maxWidth,lines=wrappedLines(value,textWidth,normal,80);
+                int bubbleH=bubbleHeight(value,textWidth);
                 cursor-=bubbleH;
-                if(cursor<top)break;
-                int x=mine?cw-pad-width:pad;
-                g.setColor(mine?(themeDark?0x164474:0xD1E8FF):(themeDark?0x24344B:0xFFFFFF));
-                g.fillRoundRect(x,cursor,width,bubbleH,large?18:12,large?18:12);
-                g.setColor(mine?BLUE:BORDER);
-                g.drawRoundRect(x,cursor,width-1,bubbleH-1,large?18:12,large?18:12);
-                wrapped(g,value,TEXT,x+7,cursor+4,textWidth,normal,lines);
-                txt(g,trim(time,width-28,small),MUTED,x+7,cursor+bubbleH-small.getHeight()-4,small);
-                // Do not fabricate delivery/read status: use server field only.
-                String readStatus=piece(m,6);
-                if(mine&&(readStatus.equals("read")||readStatus.equals("seen")))
-                    drawAsset(g,uiTheme()+"/read_double.png",x+width-(large?30:23),cursor+bubbleH-(large?19:15));
+                if(cursor<bottom&&cursor+bubbleH>top){
+                    int x=mine?left+contentW-width:left;
+                    g.setColor(mine?(themeDark?0x164474:0xD1E8FF):(themeDark?0x24344B:0xFFFFFF));
+                    g.fillRoundRect(x,cursor,width,bubbleH,large?18:12,large?18:12);
+                    g.setColor(mine?BLUE:BORDER);g.drawRoundRect(x,cursor,width-1,bubbleH-1,large?18:12,large?18:12);
+                    wrapped(g,value,TEXT,x+7,cursor+4,textWidth,normal,lines);
+                    String tm=messageTime(piece(m,4));
+                    txt(g,trim(tm,width-28,small),MUTED,x+7,cursor+bubbleH-small.getHeight()-4,small);
+                    String readStatus=piece(m,6);
+                    if(mine&&(readStatus.equals("read")||readStatus.equals("seen")))
+                        drawAsset(g,uiTheme()+"/read_double.png",x+width-(large?30:23),cursor+bubbleH-(large?19:15));
+                }
                 cursor-=gap;
+                if(cursor+bubbleH<top)break;
             }
-            if(messages.size()==0)headerHint(g,"Chưa có tin nhắn. Nhấn 2 để soạn.",top+8);
+            g.setClip(oldX,oldY,oldW,oldH);
+            if(messages.size()==0)txt(g,trim("Chưa có tin nhắn. Nhấn 2 để soạn.",contentW-8,small),MUTED,left+4,top+8,small);
+            if(chatMaxScroll>0){
+                int track=max(1,viewH-16),thumb=max(8,track*viewH/max(1,total));
+                int progress=(chatMaxScroll-chatScrollPx)*(track-thumb)/max(1,chatMaxScroll);
+                fill(g,BLUE,left+contentW-3,top+8+progress,2,thumb);
+            }
         }
         private int commentsListY(){return bodyTop+(large?45:32);}
         private void drawComments(Graphics g){
@@ -1420,16 +1503,8 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             if(s==null||maxWidth<=0)return;
             int pos=0;
             for(int line=0;line<lines&&pos<s.length();line++){
-                int end=pos,last=-1;
-                while(end<s.length()){
-                    char c=s.charAt(end);if(c=='\n')break;
-                    if(font.stringWidth(s.substring(pos,end+1))>maxWidth)break;
-                    if(c==' ')last=end;end++;
-                }
-                if(end==pos)end=min(s.length(),pos+1);
-                else if(end<s.length()&&s.charAt(end)!='\n'&&last>pos)end=last+1;
+                int end=lineEnd(s,pos,maxWidth,font);
                 String portion=s.substring(pos,end).trim();
-                if(line==lines-1&&end<s.length())portion=trim(portion,maxWidth,font);
                 txt(g,portion,color,x,y+line*(font.getHeight()+1),font);
                 pos=end;
                 while(pos<s.length()&&(s.charAt(pos)==' '||s.charAt(pos)=='\n'))pos++;
@@ -1485,7 +1560,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             else navigate(1);
         }
         private int listSize(){
-            if(tab==15)return historyItems.size();if(tab==4&&peer.length()==0)return friends.size();
+            if(tab==15)return historyItems.size();if(tab==4&&peer.length()==0)return conversations.size();
             if(tab==1)return feed.size();if(tab==2)return profilePosts.size();
             if(tab==3)return friends.size();if(tab==6)return comments.size();
             if(tab==7)return incoming.size();return 0;
@@ -1505,8 +1580,8 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             else if(index==2)navigate(3);
         }
         private void openSelectedChat(){
-            if(friends.size()==0)return;
-            String[] fr=(String[])friends.elementAt(min(selection,friends.size()-1));
+            if(conversations.size()==0)return;
+            String[] fr=(String[])conversations.elementAt(min(selection,conversations.size()-1));
             peer=piece(fr,0);peerName=piece(fr,1);navigate(4);
         }
         private void confirmAction(){
@@ -1637,7 +1712,11 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 repaint();return;
             }
             if(k==-7||k=='0'){back();repaint();return;}
-            if(k=='#'){logout();return;}
+            if(k=='#'){notification="Đăng xuất: Cài đặt > Đăng xuất";repaint();return;}
+            if(tab==4&&peer.length()>0&&(action==Canvas.LEFT||action==Canvas.RIGHT)){
+                if(splitChat())chatPaneFocus=action==Canvas.LEFT;
+                repaint();return;
+            }
             if(tab!=5){
                 if(action==Canvas.LEFT||action==Canvas.RIGHT){
                     if(!navFocus){navFocus=true;navSelection=tab==4?1:tab==3?2:0;}
@@ -1651,6 +1730,14 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 if(k=='3'){peer="";navigate(4);return;}
                 if(k=='4'){navigate(3);return;}
                 if(k=='9'){reload();return;}
+            }
+            if(tab==4&&peer.length()>0){
+                if(action==Canvas.UP||action==Canvas.DOWN){
+                    if(splitChat()&&chatPaneFocus){selection=max(0,min(max(0,conversations.size()-1),selection+(action==Canvas.UP?-1:1)));}
+                    else chatScrollPx=max(0,min(chatMaxScroll,chatScrollPx+(action==Canvas.UP?max(18,normal.getHeight()*2):-max(18,normal.getHeight()*2))));
+                    repaint();return;
+                }
+                if(splitChat()&&chatPaneFocus&&action==Canvas.FIRE){openSelectedChat();return;}
             }
             if(action==Canvas.UP){selection=max(0,selection-1);repaint();return;}
             if(action==Canvas.DOWN){selection=min(max(0,listSize()-1),selection+1);repaint();return;}
@@ -1680,7 +1767,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         /** Pointer UI is optional: key navigation remains available on E72. */
         protected void pointerPressed(int x,int y){
             if(busy)return;
-            layout();
+            layout();dragLastY=y;
             if(optionsOpen){
                 if(y>=ch-footerH){if(x<cw/2)selectOption();else{optionsOpen=false;repaint();}return;}
                 int oh=large?40:31, oy=max(headerH+2,ch-footerH-4*oh-6);
@@ -1704,7 +1791,8 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 return;
             }
             if(y>=0&&y<headerH){
-                if(tab==8||tab==9||tab==11||tab==12)back();
+                if(tab==4&&peer.length()>0){if(x<cw/2)back();}
+                else if(tab==8||tab==9||tab==11||tab==12)back();
                 else if(token.length()>0){tab=8;serverSelection=serverMode;}
                 repaint();return;
             }
@@ -1791,11 +1879,21 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 int firstY=friendListY(),first=windowStart(friends,firstY,rowH+(large?5:3));
                 if(y<firstY){if(y>bodyTop+small.getHeight()+6)navigate(7);else edit("friend","Them ban theo @handle",TextField.ANY);return;}
                 int i=first+(y-firstY)/(rowH+(large?5:3));if(i>=0&&i<friends.size()){selection=i;selectFriend();}
-            }else if(tab==4){if(peer.length()==0){int start=bodyTop+small.getHeight()+15;int h=large?57:38;int i=(y-start)/(h+3);if(y>=start&&i>=0&&i<friends.size()){selection=i;openSelectedChat();}}
-                else if(y>=bodyBottom-chatInputHeight()){
-                    if(x<pad+(large?39:27))edit("photo-chat","file:///E:/Images/anh.jpg",TextField.ANY);
+            }else if(tab==4){
+                if(peer.length()==0||splitChat()&&x<splitWidth()){
+                    int width=splitChat()?splitWidth()-pad:cw-2*pad;
+                    int start=conversationRowTop(),h=chatRowHeight()+(large?4:3);
+                    int count=max(1,(bodyBottom-start)/h);
+                    int first=max(0,min(selection-count+1,max(0,conversations.size()-count)));
+                    int i=first+(y-start)/h;
+                    if(y>=start&&i>=0&&i<conversations.size()){
+                        selection=i;chatTapStartY=y;chatTapPending=true;repaint();
+                    }
+                }else if(y>=bodyBottom-chatInputHeight()){
+                    if(x<chatContentLeft()+(large?39:27))edit("photo-chat","file:///E:/Images/anh.jpg",TextField.ANY);
                     else edit("chat","Nhập tin nhắn",TextField.ANY);
-                }else if(y<chatListY())edit("chat","Nhập tin nhắn",TextField.ANY);}
+                }else if(y<headerH&&x<cw/3)back();
+            }
             else if(tab==6){if(y<commentsListY())edit("comment","Binh luan",TextField.ANY);}
             else if(tab==7){
                 int firstY=requestsListY(),height=large?66:42,gap=large?7:4;
@@ -1803,6 +1901,28 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 if(y>=firstY&&i>=0&&i<incoming.size()){selection=i;acceptInvite();}
             }else if(tab==5){back();}
             repaint();
+        }
+        /** Touch scrolling does not replace keypad Up/Down on Nokia phones. */
+        protected void pointerDragged(int x,int y){
+            if(tab!=4||busy||dragLastY<0)return;
+            if(chatTapPending&&Math.abs(chatTapStartY-y)>8)chatTapPending=false;
+            int delta=dragLastY-y;
+            if(delta>3||delta< -3){
+                if(peer.length()>0&&(!splitChat()||x>=splitWidth())&&y>chatTop()&&y<chatBottom())
+                    chatScrollPx=max(0,min(chatMaxScroll,chatScrollPx+delta));
+                else if(peer.length()==0||splitChat()&&x<splitWidth()){
+                    int h=max(1,chatRowHeight()+(large?4:3));
+                    if(delta>=h/3||delta<=-h/3)selection=max(0,min(max(0,conversations.size()-1),selection+(delta>0?1:-1)));
+                }
+                dragLastY=y;repaint();
+            }
+        }
+        protected void pointerReleased(int x,int y){
+            dragLastY=-1;
+            if(chatTapPending&&Math.abs(y-chatTapStartY)<12){
+                chatTapPending=false;chatTapStartY=-1;openSelectedChat();return;
+            }
+            chatTapPending=false;chatTapStartY=-1;
         }
         private void toggleLike(){
             final Vector arr=tab==2?profilePosts:feed;if(arr.size()==0)return;
