@@ -52,7 +52,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
     private Vector historyItems=new Vector();
     private long storageUsed=0,storageLimit=52428800L;
     private String deleteAccountPassword="";
-    private static final String[] OPTIONS={"Cá nhân","Cài đặt","Lịch sử","Dung lượng"};
+    private static final String[] OPTIONS={"Cá nhân","Bạn bè","Tải lại","Lịch sử","Cài đặt","Bộ nhớ"};
     private static final String[] SETTINGS={"Thông báo","Đổi theme","Đổi tên","Đổi mật khẩu","Xóa tài khoản","Đăng xuất"};
     private String token="", me="", myName="";
     private TextBox editor;private final Command save=new Command("OK",Command.OK,1),cancel=new Command("Huy",Command.CANCEL,2);
@@ -90,11 +90,16 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
           GREEN=0x35C759;GREEN_DEEP=0x1761CE;SKY=0x4498FF;BG=0xF2F6FD;MUTED=0x667A98;BORDER=0xCBD9EB;}
     }
     private void openOptions(){optionsOpen=true;optionsSelection=0;screen.repaint();}
+    private int mainNavIndexForTab(int t){return t==4?1:t==7?2:0;}
+    private boolean mainTabActive(){return tab==1||tab==7||(tab==4&&peer.length()==0);}
+    private void focusMainTabs(){navFocus=true;navSelection=mainNavIndexForTab(tab);screen.repaint();}
     private void selectOption(){
         optionsOpen=false;
         if(optionsSelection==0){profileId=me;navigate(2);}
-        else if(optionsSelection==1){settingsSelection=0;tab=14;screen.repaint();}
-        else if(optionsSelection==2){historyMode=0;selection=0;tab=15;loadHistory();}
+        else if(optionsSelection==1){navigate(3);}
+        else if(optionsSelection==2){reload();screen.repaint();}
+        else if(optionsSelection==3){historyMode=0;selection=0;tab=15;loadHistory();}
+        else if(optionsSelection==4){settingsSelection=0;tab=14;screen.repaint();}
         else{storageSelection=0;tab=16;loadStorage();}
     }
     private void loadHistory(){final int mode=historyMode;work(new Task(){public void run()throws Exception{
@@ -281,7 +286,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         String[] p=single("/m/onboarding",null);
         if(p.length>1&&"0".equals(p[1])){
             onboardingFields=new String[]{"",deviceModel,""};onboardingSelection=0;onboardingRequired=true;tab=13;
-        }else{onboardingRequired=false;tab=1;feed=listing("/m/feed");cacheFeedAvatars(feed);}
+        }else{onboardingRequired=false;tab=1;navFocus=true;navSelection=0;feed=listing("/m/feed");cacheFeedAvatars(feed);}
     }
     private void openOnboarding(){
         onboardingRequired=false;onboardingFields=new String[]{profileName.length()>0?profileName:myName,deviceModel,""};
@@ -376,7 +381,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
     }
     private void navigate(int t){
         if(token.length()==0){tab=0;screen.repaint();return;}
-        tab=t;selection=0;navFocus=false;optionsOpen=false;navSelection=t==4?1:t==3?2:0;screen.chatScrollPx=0;screen.chatMaxScroll=0;screen.chatPaneFocus=false;
+        tab=t;selection=0;optionsOpen=false;navSelection=mainNavIndexForTab(t);navFocus=(t==1||t==7||(t==4&&peer.length()==0));screen.chatScrollPx=0;screen.chatMaxScroll=0;screen.chatPaneFocus=false;
         reload();
     }
     private void edit(String m,String title,int constraints){mode=m;editor=new TextBox(title,"",500,constraints);editor.addCommand(save);editor.addCommand(cancel);editor.setCommandListener(this);display.setCurrent(editor);}
@@ -712,9 +717,15 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             g.drawString(s,x,y,Graphics.TOP|Graphics.LEFT);
         }
         private void grad(Graphics g,int y,int h){
+            if(themeDark){
+                fill(g,0x16345E,0,y,cw,h);
+                return;
+            }
             for(int j=0;j<h;j+=2){
-                int t=j*22/max(1,h);
-                fill(g,((20+t)<<16)|((87+t)<<8)|Math.min(255,205+t),0,y,cw,min(2,h-j));
+                int c1=0x1D, c2=0x69, c3=0xD9;
+                int t=j*12/max(1,h);
+                int r=min(255,c1+t),gr=min(255,c2+t),b=min(255,c3+t);
+                fill(g,(r<<16)|(gr<<8)|b,0,y,cw,min(2,h-j));
             }
         }
         private void brandMark(Graphics g,int x,int y,int size){
@@ -765,9 +776,9 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 txt(g,trim(busy?"Đang tải...":notification,cw-2*pad-(busy?30:0),small),DARK,pad+(busy?30:0),ch-footerH-messageH+2,small);
             }
             grad(g,ch-footerH,footerH);
-            String left=optionsOpen?"Chọn":tab==8?"Sửa (#)":tab==9?"Thông tin":tab==10||tab==11||tab==12||tab==13?"Chọn":token.length()==0?"Chọn":tab==4&&peer.length()>0?"Gửi":tab==14||tab==15||tab==16||tab==17||tab==18||tab==19?"Chọn":"Tùy chọn";
+            String left=optionsOpen?"Chọn":tab==8?"Sửa (#)":tab==9?"Thông tin":tab==10||tab==11||tab==12||tab==13?"Chọn":token.length()==0?"Chọn":tab==4&&peer.length()>0?"Gửi":tab==14||tab==15||tab==16||tab==17||tab==18||tab==19?"Chọn":"Tab";
             txt(g,left,0xFFFFFF,pad+3,ch-footerH+max(2,(footerH-bold.getHeight())/2),bold);
-            String back=optionsOpen?"Đóng":tab==19?"Không":tab==17||tab==18?"Hủy":tab==1?"Thoát":tab==13?"Hồ sơ":tab==10||tab==11?"Đăng nhập":tab==12?"Cài đặt":tab==9?"Trở lại":token.length()==0&&tab!=8?"Thoát":"Trở về";
+            String back=optionsOpen?"Đóng":tab==19?"Không":tab==17||tab==18?"Hủy":mainTabActive()&&!navFocus?"Mục":tab==13?"Hồ sơ":tab==10||tab==11?"Đăng nhập":tab==12?"Cài đặt":tab==9?"Trở lại":token.length()==0&&tab!=8?"Thoát":"Trở về";
             txt(g,back,0xFFFFFF,cw-pad-3-bold.stringWidth(back),ch-footerH+max(2,(footerH-bold.getHeight())/2),bold);
         }
         /** Compact, responsive web-style login card, rendered without PNG assets. */
@@ -1034,7 +1045,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             java.util.Calendar c=java.util.Calendar.getInstance();int h=c.get(java.util.Calendar.HOUR_OF_DAY),m=c.get(java.util.Calendar.MINUTE);
             return (h<10?"0":"")+h+":"+(m<10?"0":"")+m;
         }
-        private int navIndex(int i){return (tab==1&&i==0)||(tab==4&&i==1)||(tab==3&&i==2)?1:0;}
+        private int navIndex(int i){return (tab==1&&i==0)||(tab==4&&i==1)||(tab==7&&i==2)?1:0;}
         /** Lucide-inspired 1px outline icons, rendered as MIDP Canvas strokes. No PNG/SVG dependencies. */
         private void stroke(Graphics g,int x1,int y1,int x2,int y2){g.drawLine(x1,y1,x2,y2);}
         private void icon(Graphics g,int kind,int x,int y,int size,int color){
@@ -1093,8 +1104,8 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         }
         private void topNav(Graphics g){
             fill(g,themeDark?0x17263B:0xFFFFFF,0,headerH,cw,navH);
-            String[] labels={"Bảng tin","Chat","Bạn bè"};
-            String[] names={"home","chats","groups"};
+            String[] labels={"Trang chủ","Chat","Thông báo"};
+            String[] names={"home","chats","notify"};
             for(int i=0;i<3;i++){
                 int x=i*cw/3,w=(i+1)*cw/3-x,y=headerH;
                 boolean active=navIndex(i)==1,focus=navFocus&&navSelection==i;
@@ -1110,17 +1121,19 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             }
         }
         private void drawOptions(Graphics g){
-            int h=large?40:31,w=Math.min(cw-2*pad,large?260:194),x=pad+2,y=ch-footerH-4* h-6;
-            if(y<headerH+2)y=headerH+2;
-            fill(g,themeDark?0x1C2F4B:0xFFFFFF,x,y,w,4*h+2);
-            g.setColor(BORDER);g.drawRect(x,y,w-1,4*h+1);
-            for(int i=0;i<4;i++){
+            int count=OPTIONS.length;
+            int h=large?38:30,w=Math.min(cw-2*pad,large?320:232),x=(cw-w)/2,y=ch-footerH-count*h-12;
+            if(y<headerH+4)y=headerH+4;
+            fill(g,themeDark?0x0A1422:0x000000,0,0,cw,ch);
+            fill(g,themeDark?0x1C2F4B:0xFFFFFF,x,y,w,count*h+2);
+            g.setColor(BORDER);g.drawRect(x,y,w-1,count*h+1);
+            String[] symbols={"profile","group","reload","clock","settings","file"};
+            for(int i=0;i<count;i++){
                 int yy=y+i*h,icol=themeDark?0xE2ECFA:DARK;
                 if(i==optionsSelection)fill(g,themeDark?0x2B456C:0xE3F0FF,x+2,yy+1,w-4,h-2);
-                String[] symbols={"profile","settings","clock","file"};
-                if(!uiIcon(g,symbols[i],x+9,yy+(h-(large?23:16))/2,themeDark))
-                    icon(g,3+i,x+9,yy+(h-18)/2,18,icol);
-                txt(g,OPTIONS[i],icol,x+36,yy+max(2,(h-normal.getHeight())/2),normal);
+                if(!uiIcon(g,symbols[i],x+10,yy+(h-(large?23:16))/2,themeDark))
+                    icon(g,(i%8),x+10,yy+(h-18)/2,18,icol);
+                txt(g,OPTIONS[i],icol,x+38,yy+max(2,(h-normal.getHeight())/2),normal);
             }
         }
         private void panel(Graphics g,int x,int y,int w,int h,boolean active){
@@ -1476,7 +1489,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         }
         private int requestsListY(){return bodyTop+(large?45:34);}
         private void drawRequests(Graphics g){
-            headerHint(g,"Lời mời - Enter để chấp nhận",bodyTop+4);
+            headerHint(g,"Thông báo - Enter để xem / chấp nhận",bodyTop+4);
             int y=requestsListY(),height=large?66:42,gap=large?7:4;
             int first=windowStart(incoming,y,height+gap);
             for(int i=first;i<incoming.size();i++){
@@ -1540,9 +1553,10 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         }
         private void back(){
             if(optionsOpen){optionsOpen=false;screen.repaint();return;}
-            if(tab==19||tab==17||tab==18){tab=tab==17?14:tab==18?16:1;deleteAccountPassword="";screen.repaint();return;}
-            if(tab==14||tab==15||tab==16){tab=1;selection=0;navSelection=0;screen.repaint();return;}
-            if(tab==1){tab=19;screen.repaint();return;}
+            if(mainTabActive()&&!navFocus){navFocus=true;screen.repaint();return;}
+            if(tab==19||tab==17||tab==18){tab=tab==17?14:tab==18?16:1;deleteAccountPassword="";navFocus=true;navSelection=0;screen.repaint();return;}
+            if(tab==14||tab==15||tab==16){tab=1;selection=0;navSelection=0;navFocus=true;screen.repaint();return;}
+            if(tab==1&&navFocus){tab=19;screen.repaint();return;}
             if(tab==13){
                 if(onboardingRequired)logout();else {tab=2;screen.repaint();}
                 return;
@@ -1551,12 +1565,12 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             if(tab==12){changeFields=new String[]{"","",""};authError="";notification="";tab=14;screen.repaint();return;}
             if(tab==8||tab==9||tab==10){
                 if(tab==10){registerFields[1]="";registerFields[2]="";authError="";registerErrorField=-1;notification="";}
-                tab=token.length()==0?0:1;screen.repaint();return;
+                tab=token.length()==0?0:1;navFocus=token.length()>0;navSelection=0;screen.repaint();return;
             }
             if(tab==5){tab=4;reload();}
-            else if(tab==6){if(historyReturnTab==15){tab=15;historyReturnTab=1;screen.repaint();}else{tab=1;reload();}}
-            else if(tab==7){tab=3;reload();}
-            else if(tab==4){if(peer.length()>0){peer="";peerName="";navigate(4);}else navigate(1);}
+            else if(tab==6){if(historyReturnTab==15){tab=15;historyReturnTab=1;screen.repaint();}else{tab=1;navFocus=true;reload();}}
+            else if(tab==7){navFocus=true;screen.repaint();}
+            else if(tab==4){if(peer.length()>0){peer="";peerName="";navigate(4);}else {navFocus=true;screen.repaint();}}
             else navigate(1);
         }
         private int listSize(){
@@ -1577,7 +1591,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         private void chooseNav(int index){
             if(index==0)navigate(1);
             else if(index==1){peer="";peerName="";navigate(4);}
-            else if(index==2)navigate(3);
+            else if(index==2)navigate(7);
         }
         private void openSelectedChat(){
             if(conversations.size()==0)return;
@@ -1594,8 +1608,8 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             int action=0;try{action=getGameAction(k);}catch(Exception ignored){}
             if(optionsOpen){
                 if(k==-7||k=='0'){optionsOpen=false;repaint();return;}
-                if(action==Canvas.UP)optionsSelection=(optionsSelection+3)%4;
-                else if(action==Canvas.DOWN)optionsSelection=(optionsSelection+1)%4;
+                if(action==Canvas.UP)optionsSelection=(optionsSelection+OPTIONS.length-1)%OPTIONS.length;
+                else if(action==Canvas.DOWN)optionsSelection=(optionsSelection+1)%OPTIONS.length;
                 else if(action==Canvas.FIRE||k==-6){selectOption();return;}
                 repaint();return;
             }
@@ -1718,17 +1732,19 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 repaint();return;
             }
             if(tab!=5){
-                if(action==Canvas.LEFT||action==Canvas.RIGHT){
-                    if(!navFocus){navFocus=true;navSelection=tab==4?1:tab==3?2:0;}
-                    navSelection=(navSelection+(action==Canvas.RIGHT?1:2))%3;
-                    repaint();return;
+                if(mainTabActive()&&(action==Canvas.LEFT||action==Canvas.RIGHT)){
+                    navFocus=true;
+                    navSelection=(mainNavIndexForTab(tab)+(action==Canvas.RIGHT?1:2))%3;
+                    chooseNav(navSelection);return;
                 }
-                if(navFocus&&action==Canvas.FIRE){chooseNav(navSelection);repaint();return;}
-                if(action==Canvas.UP||action==Canvas.DOWN)navFocus=false;
+                if(mainTabActive()&&navFocus){
+                    if(action==Canvas.FIRE||action==Canvas.DOWN){navFocus=false;repaint();return;}
+                    if(action==Canvas.UP){repaint();return;}
+                }
                 if(tab==2&&k=='9'&&profileId.equals(me)){openOnboarding();return;}
                 if(k=='1'){navigate(1);return;}
                 if(k=='3'){peer="";navigate(4);return;}
-                if(k=='4'){navigate(3);return;}
+                if(k=='4'){navigate(7);return;}
                 if(k=='9'){reload();return;}
             }
             if(tab==4&&peer.length()>0){
@@ -1770,8 +1786,9 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             layout();dragLastY=y;
             if(optionsOpen){
                 if(y>=ch-footerH){if(x<cw/2)selectOption();else{optionsOpen=false;repaint();}return;}
-                int oh=large?40:31, oy=max(headerH+2,ch-footerH-4*oh-6);
-                if(y>=oy&&y<oy+4*oh&&x<pad+2+min(cw-2*pad,large?260:194)){
+                int oh=large?38:30,count=OPTIONS.length; int ow=Math.min(cw-2*pad,large?320:232),ox=(cw-ow)/2, oy=ch-footerH-count*oh-12;
+                if(oy<headerH+4)oy=headerH+4;
+                if(y>=oy&&y<oy+count*oh&&x>=ox&&x<ox+ow){
                     optionsSelection=(y-oy)/oh;selectOption();return;}
                 optionsOpen=false;repaint();return;
             }
@@ -1858,9 +1875,9 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 if(y>=ch-footerH){if(x<cw/2)chooseWelcome();else{MiniSocialMidlet.this.destroyApp(true);MiniSocialMidlet.this.notifyDestroyed();return;}repaint();}
                 return;
             }
-            if(y>=ch-footerH){if(x>=cw/2)back();repaint();return;}
+            if(y>=ch-footerH){if(x<cw/2){if(tab==14)selectSettings();else if(tab==15){if(historyItems.size()>0){target=piece((String[])historyItems.elementAt(min(selection,historyItems.size()-1)),0);historyReturnTab=15;navigate(6);}} else if(tab==16)selectStorage();else if(tab==17||tab==18||tab==19)confirmAction(); else if(tab==4&&peer.length()>0)edit("chat","Gửi tin nhắn",TextField.ANY); else openOptions();} else back();repaint();return;}
             if(tab!=5&&y>=headerH&&y<headerH+navH){
-                int i=min(2,3*x/max(1,cw));chooseNav(i);
+                int i=min(2,3*x/max(1,cw));navFocus=true;chooseNav(i);
                 repaint();return;
             }
             if(tab==1){
