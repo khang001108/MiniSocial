@@ -21,10 +21,10 @@ public final class LucideMenuSmoke {
    for(int tab:new int[]{1,3,4,14,15,16,17,18,19}){put(a,"tab",Integer.valueOf(tab));paint(c);count++;}
    put(a,"tab",Integer.valueOf(1));
    press(c,-6);check(((Boolean)get(a,"optionsOpen")).booleanValue(),"left softkey opens menu");paint(c);
-   press(c,-102);press(c,-105);check(number(a,"tab")==14,"option settings");
+   press(c,'5');check(number(a,"tab")==14,"option settings via keypad 5");
    press(c,-102);press(c,-105);check(((Boolean)get(a,"themeDark")).booleanValue(),"dark theme switch");paint(c);
    press(c,-7);check(number(a,"tab")==1,"back to home");
-   press(c,-7);check(number(a,"tab")==19,"right softkey on home opens exit confirmation");
+   press(c,-7);check(number(a,"tab")==19,"right softkey on selected home tab opens exit confirmation");
    press(c,-7);check(number(a,"tab")==1,"cancel exit");
    put(a,"tab",Integer.valueOf(17));press(c,'1');check("delete-password".equals(get(a,"mode")),"delete requires password editor");
   }

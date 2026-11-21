@@ -725,7 +725,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 int c1=0x1D, c2=0x69, c3=0xD9;
                 int t=j*12/max(1,h);
                 int r=min(255,c1+t),gr=min(255,c2+t),b=min(255,c3+t);
-                fill(g,(r<<16)|(gr<<8)|b,0,y,cw,min(2,h-j));
+                fill(g,(r<<16)|(gr<<8)|b,0,y+j,cw,min(2,h-j));
             }
         }
         private void brandMark(Graphics g,int x,int y,int size){
@@ -769,7 +769,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 else if(tab==17||tab==18||tab==19)drawConfirm(g);
             }
             if(optionsOpen)drawOptions(g);
-            if((tab!=0&&tab!=10&&tab!=11&&tab!=12&&tab!=13)&&(busy||notification!=null&&notification.length()>0)){
+            if(!optionsOpen&&(tab!=0&&tab!=10&&tab!=11&&tab!=12&&tab!=13)&&(busy||notification!=null&&notification.length()>0)){
                 int messageH=large?24:16;
                 fill(g,themeDark?0x203656:0xDDEBFF,0,ch-footerH-messageH,cw,messageH);
                 if(busy)drawAsset(g,uiTheme()+"/spinner.png",pad,ch-footerH-messageH+max(0,(messageH-(large?22:16))/2));
@@ -1105,7 +1105,7 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
         private void topNav(Graphics g){
             fill(g,themeDark?0x17263B:0xFFFFFF,0,headerH,cw,navH);
             String[] labels={"Trang chủ","Chat","Thông báo"};
-            String[] names={"home","chats","notify"};
+            String[] names={"home","chats","bell"};
             for(int i=0;i<3;i++){
                 int x=i*cw/3,w=(i+1)*cw/3-x,y=headerH;
                 boolean active=navIndex(i)==1,focus=navFocus&&navSelection==i;
@@ -1120,20 +1120,65 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
                 txt(g,labels[i],active||focus?DARK:TEXT,tx+iconSize+sep,y+max(1,(navH-small.getHeight())/2),small);
             }
         }
+        // Bottom sheet: six actions in a true two-column, three-row grid.
+        // Geometry depends on the current Canvas size, not a fixed Nokia model.
+        private int tabSheetTitleH(){return large?32:24;}
+        private int tabSheetMargin(){return large?10:6;}
+        private int tabSheetGap(){return large?8:5;}
+        private int tabSheetCellH(){
+            int base=large?(compactLandscape?57:72):(ch<=260?43:54);
+            int space=ch-footerH-headerH-10-tabSheetTitleH()-2*tabSheetMargin()-2*tabSheetGap();
+            return max(27,min(base,space/3));
+        }
+        private int tabSheetHeight(){return tabSheetTitleH()+2*tabSheetMargin()+3*tabSheetCellH()+2*tabSheetGap();}
+        private int tabSheetTop(){return ch-footerH-tabSheetHeight();}
+        private int tabSheetX(){return max(3,pad);}
+        private int tabSheetWidth(){return cw-2*tabSheetX();}
+        private int tabSheetCellW(){return max(1,(tabSheetWidth()-2*tabSheetMargin()-tabSheetGap())/2);}
+        private int tabSheetIndexAt(int x,int y){
+            int firstX=tabSheetX()+tabSheetMargin();
+            int firstY=tabSheetTop()+tabSheetTitleH()+tabSheetMargin();
+            int strideX=tabSheetCellW()+tabSheetGap();
+            int strideY=tabSheetCellH()+tabSheetGap();
+            if(x<firstX||y<firstY)return -1;
+            int col=(x-firstX)/max(1,strideX),row=(y-firstY)/max(1,strideY);
+            if(col<0||col>1||row<0||row>2)return -1;
+            if((x-firstX)%strideX>=tabSheetCellW()||(y-firstY)%strideY>=tabSheetCellH())return -1;
+            return row*2+col;
+        }
         private void drawOptions(Graphics g){
-            int count=OPTIONS.length;
-            int h=large?38:30,w=Math.min(cw-2*pad,large?320:232),x=(cw-w)/2,y=ch-footerH-count*h-12;
-            if(y<headerH+4)y=headerH+4;
-            fill(g,themeDark?0x0A1422:0x000000,0,0,cw,ch);
-            fill(g,themeDark?0x1C2F4B:0xFFFFFF,x,y,w,count*h+2);
-            g.setColor(BORDER);g.drawRect(x,y,w-1,count*h+1);
-            String[] symbols={"profile","group","reload","clock","settings","file"};
-            for(int i=0;i<count;i++){
-                int yy=y+i*h,icol=themeDark?0xE2ECFA:DARK;
-                if(i==optionsSelection)fill(g,themeDark?0x2B456C:0xE3F0FF,x+2,yy+1,w-4,h-2);
-                if(!uiIcon(g,symbols[i],x+10,yy+(h-(large?23:16))/2,themeDark))
-                    icon(g,(i%8),x+10,yy+(h-18)/2,18,icol);
-                txt(g,OPTIONS[i],icol,x+38,yy+max(2,(h-normal.getHeight())/2),normal);
+            int sheetY=tabSheetTop(),margin=tabSheetMargin(),gap=tabSheetGap();
+            int cellW=tabSheetCellW(),cellH=tabSheetCellH();
+            int firstX=tabSheetX()+margin;
+            int firstY=sheetY+tabSheetTitleH()+margin;
+            int lightBg=themeDark?0x152840:0xEFF5FE;
+            int titleColor=themeDark?0xF4F8FF:0x17355E;
+            // Do not black out the whole screen: this is a bottom-up quick menu.
+            fill(g,lightBg,0,sheetY,cw,ch-footerH-sheetY);
+            fill(g,BLUE,0,sheetY,cw,2);
+            fill(g,themeDark?0x6188B9:0xB6CBE6,(cw-34)/2,sheetY+5,34,3);
+            String sheetTitle="Tab · Menu nhanh";
+            txt(g,sheetTitle,titleColor,max(pad,(cw-bold.stringWidth(sheetTitle))/2),sheetY+10,bold);
+            String[] symbols={"profile","groups","refresh","clock","settings","file"};
+            for(int i=0;i<OPTIONS.length;i++){
+                int col=i%2,row=i/2;
+                int x=firstX+col*(cellW+gap),y=firstY+row*(cellH+gap);
+                boolean selected=i==optionsSelection;
+                int cardBg=themeDark?(selected?0x285080:0x203A59):(selected?0xD8EBFF:0xFFFFFF);
+                int border=selected?BLUE:(themeDark?0x49617D:BORDER);
+                g.setColor(cardBg);g.fillRoundRect(x,y,cellW,cellH,10,10);
+                g.setColor(border);g.drawRoundRect(x,y,cellW-1,cellH-1,10,10);
+                int labelY=y+cellH-small.getHeight()-max(3,cellH/10);
+                Image image=asset("icons/"+(themeDark?"white":"blue")+"/"+symbols[i]+".png");
+                if(image!=null){
+                    int iy=y+max(3,(labelY-y-image.getHeight())/2);
+                    g.drawImage(image,x+(cellW-image.getWidth())/2,iy,Graphics.TOP|Graphics.LEFT);
+                }else{
+                    int sz=min(18,max(12,labelY-y-5));
+                    icon(g,i%8,x+(cellW-sz)/2,y+max(2,(labelY-y-sz)/2),sz,themeDark?0xFFFFFF:BLUE);
+                }
+                String label=trim(OPTIONS[i],cellW-8,small);
+                txt(g,label,titleColor,x+(cellW-small.stringWidth(label))/2,labelY,small);
             }
         }
         private void panel(Graphics g,int x,int y,int w,int h,boolean active){
@@ -1608,8 +1653,10 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             int action=0;try{action=getGameAction(k);}catch(Exception ignored){}
             if(optionsOpen){
                 if(k==-7||k=='0'){optionsOpen=false;repaint();return;}
-                if(action==Canvas.UP)optionsSelection=(optionsSelection+OPTIONS.length-1)%OPTIONS.length;
-                else if(action==Canvas.DOWN)optionsSelection=(optionsSelection+1)%OPTIONS.length;
+                if(action==Canvas.UP)optionsSelection=(optionsSelection+OPTIONS.length-2)%OPTIONS.length;
+                else if(action==Canvas.DOWN)optionsSelection=(optionsSelection+2)%OPTIONS.length;
+                else if(action==Canvas.LEFT||action==Canvas.RIGHT)optionsSelection^=1;
+                else if(k>='1'&&k<='6'){optionsSelection=k-'1';selectOption();return;}
                 else if(action==Canvas.FIRE||k==-6){selectOption();return;}
                 repaint();return;
             }
@@ -1786,11 +1833,10 @@ public final class MiniSocialMidlet extends MIDlet implements CommandListener {
             layout();dragLastY=y;
             if(optionsOpen){
                 if(y>=ch-footerH){if(x<cw/2)selectOption();else{optionsOpen=false;repaint();}return;}
-                int oh=large?38:30,count=OPTIONS.length; int ow=Math.min(cw-2*pad,large?320:232),ox=(cw-ow)/2, oy=ch-footerH-count*oh-12;
-                if(oy<headerH+4)oy=headerH+4;
-                if(y>=oy&&y<oy+count*oh&&x>=ox&&x<ox+ow){
-                    optionsSelection=(y-oy)/oh;selectOption();return;}
-                optionsOpen=false;repaint();return;
+                int chosen=tabSheetIndexAt(x,y);
+                if(chosen>=0){optionsSelection=chosen;selectOption();return;}
+                if(y<tabSheetTop()){optionsOpen=false;repaint();}
+                return;
             }
             if(token.length()>0&&y>=ch-footerH){
                 if(x>=cw/2){back();repaint();return;}
